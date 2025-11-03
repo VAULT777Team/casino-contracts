@@ -1,0 +1,24 @@
+[profile.default]
+src = "contracts"
+out = "artifacts"
+libs = ["node_modules", "lib"]
+remappings = [
+    "@pythnetwork/pyth-sdk-solidity/=node_modules/@pythnetwork/pyth-sdk-solidity",
+    "@pythnetwork/entropy-sdk-solidity/=node_modules/@pythnetwork/entropy-sdk-solidity",
+    "@chainlink/=node_modules/@chainlink/",
+    "@ensdomains/=node_modules/@ensdomains/",
+    "@eth-optimism/=node_modules/@eth-optimism/",
+    "@openzeppelin/=node_modules/@openzeppelin/",
+    "eth-gas-reporter/=node_modules/eth-gas-reporter/",
+    "hardhat/=node_modules/hardhat/",
+]
+
+etherscan_api_key = "${ETHERSCAN_API_KEY}"
+
+[etherscan]
+arbtestnet = { key = "${ETHERSCAN_API_KEY}", url = "https://api.etherscan.io/v2/api?chainid=421614" }
+
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+
+[lint]
+exclude_lints = ["unsafe-typecast", "mixed-case-function", "mixed-case-variable", "asm-keccak256"]
