@@ -335,12 +335,4 @@ contract BankLP is WithStorage {
         // 2% to treasury, where 50% of fee should be rebated for play2earn rewards
         treasury.deposit(token, fee);
     }
-
-    /**
-    redundant function
-     */
-    function claimFees(address recipient, address token) external onlyOwner {
-        require(fees[token] > 0, 'Not enough fees acrued');
-        IERC20(token).transfer(recipient, fees[token]);
-    }
 }
