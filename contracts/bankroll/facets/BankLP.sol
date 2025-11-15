@@ -87,7 +87,7 @@ contract BankLP is WithStorage {
         treasury = Treasury(payable(_treasury));
     }
 
-    function setOwner(address _owner) external {
+    function setOwner(address _owner) external onlyOwner {
         owner = _owner;
     }
 
