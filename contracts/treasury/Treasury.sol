@@ -19,10 +19,10 @@ contract Treasury {
 
     // receive ether
     receive() external payable {
-        emit TreasuryDeposit(msg.sender, address(this), amount);
+        emit TreasuryDeposit(msg.sender, address(0), msg.value);
     }
     fallback() external payable {
-        emit TreasuryDeposit(msg.sender, token, amount);
+        emit TreasuryDeposit(msg.sender, address(0), msg.value);
     }
 
 
