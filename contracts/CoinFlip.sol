@@ -130,7 +130,7 @@ contract CoinFlip is Common {
             revert InvalidNumBets(100);
         }
 
-        _kellyWager(wager, tokenAddress);
+        _kellyWager(wager, numBets, tokenAddress);
         uint256 fee = _transferWager(
             tokenAddress,
             wager * numBets,
@@ -258,8 +258,9 @@ contract CoinFlip is Common {
 
     /**
      * @dev calculates the maximum wager allowed based on the bankroll size
+     take into account numBets
      */
-    function _kellyWager(uint256 wager, address tokenAddress) internal view {
+    function _kellyWager(uint256 wager, uint256 numBets, address tokenAddress) internal view {
         uint256 balance;
         if (tokenAddress == address(0)) {
             balance = address(Bankroll).balance;
@@ -267,7 +268,9 @@ contract CoinFlip is Common {
             balance = IERC20(tokenAddress).balanceOf(address(Bankroll));
         }
         uint256 maxWager = (balance * 1122448) / 100000000;
-        if (wager > maxWager) {
+        uint256 exposure = wager * numBets;
+
+        if(wager > maxWager || exposure > maxWager){
             revert WagerAboveLimit(wager, maxWager);
         }
     }
