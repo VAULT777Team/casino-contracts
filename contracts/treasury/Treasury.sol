@@ -18,8 +18,12 @@ contract Treasury {
     }
 
     // receive ether
-    receive() external payable {}
-    fallback() external payable {}
+    receive() external payable {
+        emit TreasuryDeposit(msg.sender, address(this), amount);
+    }
+    fallback() external payable {
+        emit TreasuryDeposit(msg.sender, token, amount);
+    }
 
 
     function deposit(address token, uint256 amount) external {
