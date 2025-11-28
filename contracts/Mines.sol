@@ -303,7 +303,7 @@ contract Mines is Common {
         game.tilesPicked = tiles;
         game.isCashout = isCashout;
         game.requestID = id;
-        game.blockNumber = uint64(block.number);
+        game.blockNumber = uint64(ChainSpecificUtil.getBlockNumber());
         emit Mines_Fee_Event(msgSender, VRFFee);
     }
 
@@ -525,7 +525,7 @@ contract Mines is Common {
             numberTilesLeft;
 
         bool won = false;
-        if (rng % 10000 <= winChance) {
+        if (rng % 10000 < winChance) {
             won = true;
         }
         minesGames[player].revealedTiles[tileNumber] = true;
