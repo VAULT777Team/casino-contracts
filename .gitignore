@@ -1,2 +1,5 @@
 node_modules/*
+
+# sensitive environment files
 .env
+.env.arb-*
