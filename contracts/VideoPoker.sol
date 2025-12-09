@@ -267,16 +267,17 @@ contract VideoPoker is Common {
         } else {
             Card[] memory deck = initialDeck;
 
+            //Replace the assembly-based approach with a safer, more maintainable solution using an explicit length variable:
+            uint256 deckLength = deck.length;
             for (uint256 g = 0; g < 5; g++) {
-                for (uint256 j = 0; j < 52; j++) {
+                for (uint256 j = 0; j < deckLength; j++) {
                     if (
-                        game.cardsInHand[g].number == deck[j].number &&
-                        game.cardsInHand[g].suit == deck[j].suit
+                        game.cardsInHand[g].number == deck[j].number 
+                        && game.cardsInHand[g].suit == deck[j].suit
                     ) {
-                        deck[j] = deck[deck.length - 1];
-                        assembly {
-                            mstore(deck, sub(mload(deck), 1))
-                        }
+                        // Swap with last element and decrement length
+                        deck[j] = deck[deckLength - 1];
+                        deckLength--;
                         break;
                     }
                 }

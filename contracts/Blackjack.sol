@@ -181,6 +181,9 @@ contract Blackjack is Common {
         }
 
         game.playerStand = true;
+
+        // use request instead for VRF?
+        //_requestRandomWords(1);
         _resolveDealerPlay(msgSender);
     }
 
@@ -256,6 +259,15 @@ contract Blackjack is Common {
         }
     }
 
+    /**
+        //TODO: add VRF RNG to this
+        //FIX: currently uses a hardcoded seed based on block.timestamp
+        it should have a random number from VRF passed instead
+
+        #VAU-02: Predictable Dealer Card Generation In _resolveDealerPlay()
+        Use Chainlink VRF to generate random dealer cards instead of deterministic on-chain computation. 
+        Request additional random words during the initial deal or when the player stands to ensure all dealer cards are truly random.
+     */
     function _resolveDealerPlay(address player) internal {
         BlackjackGame storage game = blackjackGames[player];
         
