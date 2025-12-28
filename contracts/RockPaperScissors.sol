@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.0;
 
-import "./Common.sol";
+import {
+    Common, IBankRoll,
+    ChainSpecificUtil,
+    IERC20, SafeERC20,
+    VRFConsumerBaseV2Plus, IVRFCoordinatorV2Plus,
+    IDecimalAggregator
+} from "./Common.sol";
 
 /**
  * @title rock paper scissors game, players select an action and play against the VRF actions
@@ -147,16 +153,17 @@ contract RockPaperScissors is Common {
         );
         uint256 id = _requestRandomWords(numBets);
 
-        rockPaperScissorsGames[msgSender] = RockPaperScissorsGame(
-            wager,
-            stopGain,
-            stopLoss,
-            id,
-            tokenAddress,
-            uint64(ChainSpecificUtil.getBlockNumber()),
-            numBets,
-            action
-        );
+        rockPaperScissorsGames[msgSender] = RockPaperScissorsGame({
+            requestID: id,
+            wager: wager,
+            stopGain: stopGain,
+            stopLoss: stopLoss,
+            tokenAddress: tokenAddress,
+            blockNumber: uint64(ChainSpecificUtil.getBlockNumber()),
+            numBets: numBets,
+            action: action
+        });
+
         rockPaperScissorsIDs[id] = msgSender;
 
         emit RockPaperScissors_Play_Event(
@@ -272,33 +279,36 @@ contract RockPaperScissors is Common {
     function _determineRPSResult(
         uint8 playerPick,
         uint8 rngPick
-    ) internal pure returns (uint8) {
+    ) internal pure returns (uint8 result) {
         if (playerPick == rngPick) {
-            return 2;
+            result = 2;
         }
+
         if (playerPick == 0) {
             if (rngPick == 1) {
-                return 0;
+                result = 1;
             } else {
-                return 1;
+                result = 1;
             }
         }
 
         if (playerPick == 1) {
             if (rngPick == 2) {
-                return 0;
+                result = 0;
             } else {
-                return 1;
+                result = 1;
             }
         }
 
         if (playerPick == 2) {
             if (rngPick == 0) {
-                return 0;
+                result = 0;
             } else {
-                return 1;
+                result = 1;
             }
         }
+
+        return result;
     }
 
     /**

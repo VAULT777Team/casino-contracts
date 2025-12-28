@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.0;
 
-import "./Common.sol";
+import {
+    Common, IBankRoll,
+    ChainSpecificUtil,
+    IERC20, SafeERC20,
+    VRFConsumerBaseV2Plus, IVRFCoordinatorV2Plus,
+    IDecimalAggregator
+} from "./Common.sol";
 
 /**
  * @title blackjack game, players play against dealer to reach 21 without going over

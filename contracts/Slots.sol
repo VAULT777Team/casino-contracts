@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.0;
 
-import "./Common.sol";
+import {
+    Common, IBankRoll,
+    ChainSpecificUtil,
+    IERC20, SafeERC20,
+    VRFConsumerBaseV2Plus, IVRFCoordinatorV2Plus,
+    IDecimalAggregator
+} from "./Common.sol";
 
 /**
  * @title slots game, players put in a wager and recieve payout depending on the slots outcome
@@ -163,15 +169,16 @@ contract Slots is Common {
         );
         uint256 id = _requestRandomWords(numBets);
 
-        slotsGames[msgSender] = SlotsGame(
-            wager,
-            stopGain,
-            stopLoss,
-            id,
-            tokenAddress,
-            uint64(ChainSpecificUtil.getBlockNumber()),
-            numBets
-        );
+        slotsGames[msgSender] = SlotsGame({
+            requestID: id,
+            wager: wager,
+            stopGain: stopGain,
+            stopLoss: stopLoss,
+            tokenAddress: tokenAddress,
+            blockNumber: uint64(ChainSpecificUtil.getBlockNumber()),
+            numBets: numBets
+        });
+
         slotsIDs[id] = msgSender;
 
         emit Slots_Play_Event(

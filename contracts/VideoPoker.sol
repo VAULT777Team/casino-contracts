@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.0;
 
-import "./Common.sol";
+import {
+    Common, IBankRoll,
+    ChainSpecificUtil,
+    IERC20, SafeERC20,
+    VRFConsumerBaseV2Plus, IVRFCoordinatorV2Plus,
+    IDecimalAggregator
+} from "./Common.sol";
 
 /**
  * @title video poker game, players get dealt a 5 card hand and can replace any number of cards to form winning combinations
@@ -24,7 +30,7 @@ contract VideoPoker is Common {
 
         for (uint8 s = 0; s < 4; s++) {
             for (uint8 n = 1; n < 14; n++) {
-                initialDeck.push(Card(n, s));
+                initialDeck.push(Card({ number: n, suit: s}));
             }
         }
     }

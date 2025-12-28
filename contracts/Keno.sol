@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.0;
 
-import "./Common.sol";
+import {
+    Common, IBankRoll,
+    ChainSpecificUtil,
+    IERC20, SafeERC20,
+    VRFConsumerBaseV2Plus, IVRFCoordinatorV2Plus,
+    IDecimalAggregator
+} from "./Common.sol";
 
 /**
  * @title keno game, players select numbers and get paid based on how many match the drawn numbers

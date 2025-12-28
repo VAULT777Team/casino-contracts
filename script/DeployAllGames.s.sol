@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.0;
 
-import "forge-std/Script.sol";
-import "../contracts/CoinFlip.sol";
-import "../contracts/Dice.sol";
-import "../contracts/VideoPoker.sol";
-import "../contracts/Blackjack.sol";
-import "../contracts/Plinko.sol";
-import "../contracts/Keno.sol";
-import "../contracts/Slots.sol";
-import "../contracts/Mines.sol";
-import "../contracts/RockPaperScissors.sol";
-import "../contracts/games/Roulette/AmericanRoulette.sol";
-import "../contracts/games/Roulette/EuropeanRoulette.sol";
+import {console, Script} from "forge-std/Script.sol";
+import {CoinFlip} from "../contracts/CoinFlip.sol";
+import {Dice} from "../contracts/Dice.sol";
+import {VideoPoker} from "../contracts/VideoPoker.sol";
+import {Blackjack} from "../contracts/Blackjack.sol";
+import {Plinko} from "../contracts/Plinko.sol";
+import {Keno} from "../contracts/Keno.sol";
+import {Slots} from "../contracts/Slots.sol";
+import {Mines} from "../contracts/Mines.sol";
+import {RockPaperScissors} from "../contracts/RockPaperScissors.sol";
+import {AmericanRoulette} from "../contracts/games/Roulette/AmericanRoulette.sol";
+import {EuropeanRoulette} from "../contracts/games/Roulette/EuropeanRoulette.sol";
 
 contract DeployAllGames is Script {
     // Core infrastructure addresses (from .env)

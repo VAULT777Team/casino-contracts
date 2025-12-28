@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.0;
 
-import "../../Common.sol";
+import {
+    Common, IBankRoll,
+    ChainSpecificUtil,
+    IERC20, SafeERC20,
+    VRFConsumerBaseV2Plus, IVRFCoordinatorV2Plus,
+    IDecimalAggregator
+} from "../../Common.sol";
 
 /**
  * @title American Roulette Game (00 wheel)
@@ -136,17 +142,17 @@ contract EuropeanRoulette is Common {
 
         uint256 requestID = _requestRandomWords(numBets);
 
-        rouletteGames[msgSender] = RouletteGame(
-            wager,
-            stopGain,
-            stopLoss,
-            requestID,
-            tokenAddress,
-            uint64(ChainSpecificUtil.getBlockNumber()),
-            numBets,
-            betType,
-            betValue
-        );
+        rouletteGames[msgSender] = RouletteGame({
+            requestID: requestID,
+            wager: wager,
+            stopGain: stopGain,
+            stopLoss: stopLoss,
+            tokenAddress: tokenAddress,
+            blockNumber: uint64(ChainSpecificUtil.getBlockNumber()),
+            numBets: numBets,
+            betType: betType,
+            betValue: betValue
+        });
 
         rouletteIDs[requestID] = msgSender;
 

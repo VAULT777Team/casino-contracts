@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.0;
 
-import "./Common.sol";
-import "hardhat/console.sol";
+import {
+    Common, IBankRoll,
+    ChainSpecificUtil,
+    IERC20, SafeERC20,
+    VRFConsumerBaseV2Plus, IVRFCoordinatorV2Plus,
+    IDecimalAggregator
+} from "./Common.sol";
 
 /**
  * @title Dice game, players predict if outcome will be over or under the selected number
@@ -154,17 +159,18 @@ contract Dice is Common {
 
         uint256 id = _requestRandomWords(numBets);
 
-        diceGames[msgSender] = DiceGame(
-            wager,
-            stopGain,
-            stopLoss,
-            id,
-            tokenAddress,
-            uint64(ChainSpecificUtil.getBlockNumber()),
-            numBets,
-            multiplier,
-            isOver
-        );
+        diceGames[msgSender] = DiceGame({
+            requestID: id,
+            wager: wager,
+            stopGain: stopGain,
+            stopLoss: stopLoss,
+            tokenAddress: tokenAddress,
+            blockNumber: uint64(ChainSpecificUtil.getBlockNumber()),
+            numBets: numBets,
+            multiplier: multiplier,
+            isOver: isOver
+        });
+
         diceIDs[id] = msgSender;
 
         emit Dice_Play_Event(

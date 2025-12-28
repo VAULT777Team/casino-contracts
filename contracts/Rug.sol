@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.0;
 
-import "./Common.sol";
+import {
+    Common, IBankRoll,
+    ChainSpecificUtil,
+    IERC20, SafeERC20,
+    VRFConsumerBaseV2Plus, IVRFCoordinatorV2Plus,
+    IDecimalAggregator
+} from "./Common.sol";
 
 /**
  * @title Rug game, players pool funds and the last players earn the majority of shares
@@ -141,16 +147,16 @@ contract Rug is Common {
 
         uint256 id = _requestRandomWords(numBets);
 
-        coinFlipGames[msgSender] = CoinFlipGame(
-            wager,
-            stopGain,
-            stopLoss,
-            id,
-            tokenAddress,
-            uint64(ChainSpecificUtil.getBlockNumber()),
-            numBets,
-            isHeads
-        );
+        coinFlipGames[msgSender] = CoinFlipGame({
+            requestID: id,
+            wager: wager,
+            stopGain: stopGain,
+            stopLoss: stopLoss,
+            tokenAddress: tokenAddress,
+            blockNumber: uint64(ChainSpecificUtil.getBlockNumber()),
+            numBets: numBets,
+            isHeads: isHeads
+        });
         coinIDs[id] = msgSender;
 
         emit CoinFlip_Play_Event(

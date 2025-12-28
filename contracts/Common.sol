@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.0;
 
-import "@chainlink/contracts/src/v0.8/vrf/dev/interfaces/IVRFCoordinatorV2Plus.sol";
-import "@chainlink/contracts/src/v0.8/data-feeds/interfaces/IDecimalAggregator.sol";
+import {IVRFCoordinatorV2Plus, VRFV2PlusClient} from "@chainlink/contracts/src/v0.8/vrf/dev/interfaces/IVRFCoordinatorV2Plus.sol";
+import {IDecimalAggregator} from "@chainlink/contracts/src/v0.8/data-feeds/interfaces/IDecimalAggregator.sol";
 import {VRFConsumerBaseV2Plus} from "@chainlink/contracts/src/v0.8/vrf/dev/VRFConsumerBaseV2Plus.sol";
 
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "hardhat/console.sol";
-import "./ChainSpecificUtil.sol";
+import {ChainSpecificUtil} from "./ChainSpecificUtil.sol";
 
 interface IBankRoll {
     function addPlayerReward(
@@ -44,6 +43,20 @@ interface IBankRoll {
     function isPlayerSuspended(
         address player
     ) external view returns (bool, uint256);
+
+    // reserves
+    function getAvailableBalance(address token) external view returns (uint256);
+
+    function reserveFunds(
+        address token, 
+        uint256 amount
+    ) external;
+
+    function releaseFunds(
+        address token,
+        uint256 amount
+    ) external;
+
 }
 
 abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
@@ -77,13 +90,34 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
         Bankroll = IBankRoll(_bankRoll);
     }
 
+
+    /**
+     * @dev helper function to reserve max possible payout from bankroll
+     * @param tokenAddress Address of the token to reserve
+     * @param maxPayout Total amount to release from reserve
+    */
+    function _reserveMaxPayout(address tokenAddress, uint256 maxPayout) internal {
+        uint256 available = Bankroll.getAvailableBalance(tokenAddress);
+        require(available >= maxPayout, "Insufficient bankroll for max payout");
+
+        Bankroll.reserveFunds(tokenAddress, maxPayout);
+    }
+
+    /**
+     * @dev helper function to release reserved funds from bankroll
+     * @param tokenAddress address of the token to release
+     * @param amount total amount to release from reserves
+     */
+    function _releaseReserve(address tokenAddress, uint256 amount) internal {
+        Bankroll.releaseFunds(tokenAddress, amount);
+    }
+
     /**
      * @dev function to transfer the player wager to bankroll, and charge for VRF fee
      * , reverts if bankroll doesn't approve game or token
      * @param tokenAddress address of the token the wager is made on
      * @param wager total amount wagered
      */
-
     function _transferWager(
         address tokenAddress,
         uint256 wager,

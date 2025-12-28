@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import "./Faucet.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {Faucet} from "./Faucet.sol";
 
 /**
  * @title FaucetRelayer

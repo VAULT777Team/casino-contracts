@@ -36,6 +36,9 @@ forwarder: 0xd1217489b92d4D9179b31FEDCf459C6cC9Ba528a
 
 #### sepolia
 
+Registry: 0xbEEA9c6f64e5E52D0C133857587159106Ec295C0
+VaultLP: 0xC70F45800f12630dC07E4D77540b90F451C060Ec
+
 | Contract | Address | Description |
 |----------|---------|-------------|
 | VRF (Chainlink VRF Coordinator) | `0x5CE8D5A2BC84beb22a398CCA51996F7930313D61` | Chainlink VRF V2+ coordinator for generating verifiable random numbers |

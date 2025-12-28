@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.0;
 
-import "./Common.sol";
+import {
+    Common, IBankRoll,
+    ChainSpecificUtil,
+    IERC20, SafeERC20,
+    VRFConsumerBaseV2Plus, IVRFCoordinatorV2Plus,
+    IDecimalAggregator
+} from "./Common.sol";
 
 /**
  * @title plinko game, players select a number of rows and risk and get payouts depending on the final position of the ball
@@ -215,17 +221,18 @@ contract Plinko is Common {
         );
         uint256 id = _requestRandomWords(numBets);
 
-        plinkoGames[msgSender] = PlinkoGame(
-            wager,
-            stopGain,
-            stopLoss,
-            id,
-            tokenAddress,
-            uint64(ChainSpecificUtil.getBlockNumber()),
-            numBets,
-            risk,
-            numRows
-        );
+        plinkoGames[msgSender] = PlinkoGame({
+            requestID: id,
+            wager: wager,
+            stopGain: stopGain,
+            stopLoss: stopLoss,
+            tokenAddress: tokenAddress,
+            blockNumber: uint64(ChainSpecificUtil.getBlockNumber()),
+            numBets: numBets,
+            risk: risk,
+            numRows: numRows
+        });
+
         plinkoIDs[id] = msgSender;
 
         emit Plinko_Play_Event(
