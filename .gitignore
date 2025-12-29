@@ -6,6 +6,6 @@ node_modules/*
 
 # foundry
 
-artifacts/
+artifacts/*
 cache/
 broadcast/
