@@ -42,7 +42,26 @@ contract Treasury {
 
     }
 
-    function withdraw(address recipient, address token) external onlyOwner {
+    function withdraw(address recipient, address token, uint256 amount) external onlyOwner {
+        uint256 balance = 0;
+        if(token == address(0)){
+            balance = address(this).balance;
+            require(balance >= amount, 'Not enough native tokens');
+            (bool success, ) = payable(recipient).call{value: amount}("");
+            require(success, "Failed to transfer ETH");
+        } else {
+            balance = IERC20(token).balanceOf(address(this));
+            require(balance >= amount, 'Not enough fees acrued');
+
+            (bool success) = IERC20(token).transfer(recipient, amount);
+            require(success, "Failed to transfer ERC20 tokens");
+        }
+
+        emit TreasuryWithdrawal(msg.sender, recipient, token, amount);
+    }
+
+
+    function withdrawAll(address recipient, address token) external onlyOwner {
         uint256 balance = 0;
         if(token == address(0)){
             balance = address(this).balance;
@@ -59,6 +78,7 @@ contract Treasury {
 
         emit TreasuryWithdrawal(msg.sender, recipient, token, balance);
     }
+
 
     /// @notice Execute a single function call.
     /// @param to Address of the contract to execute.
