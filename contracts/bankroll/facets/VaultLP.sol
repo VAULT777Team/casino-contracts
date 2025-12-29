@@ -9,7 +9,9 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 interface IBankLP {
-    function fundBankroll(address token, uint256 amount) external;
+    function fundBankroll(address token, uint256 amount) external returns (bool);
+    function withdrawBankroll(address to, address token, uint256 amount) external returns (bool);
+
     function getAvailableBalance(address token) external view returns (uint256);
     function execute(address to, uint256 value, bytes calldata data) external returns (bool, bytes memory);
 }
@@ -212,7 +214,8 @@ contract VaultLP is ReentrancyGuard, Ownable {
             // Reset allowance to 0 first to avoid SafeERC20 non-zero to non-zero error
             IERC20(token).safeApprove(address(bankroll), 0);
             IERC20(token).safeApprove(address(bankroll), amount);
-            bankroll.fundBankroll(token, amount);
+            bool funded = bankroll.fundBankroll(token, amount);
+            require(funded, "Funding bankroll failed");
         }
 
         // Store normalized amounts internally for consistent accounting
@@ -246,12 +249,17 @@ contract VaultLP is ReentrancyGuard, Ownable {
         UserInfo storage user = userInfo[token][msg.sender];
         require(user.shares >= shares, "Insufficient shares");
         
+        // Calculate normalized amount to withdraw based on shares
+        uint256 normalizedAmount = calculateTokenAmount(token, shares);
+        uint256 tokenAmount = denormalizeAmount(token, normalizedAmount);
+
         // Check if we're in a valid withdrawal window
         require(isInWithdrawWindow(), "Not in valid withdrawal window");
-
-        StakingPool storage pool = pools[token];
+        require(block.timestamp >= user.lastDepositTime + claimRate, "Lock period not met");
+        require(bankroll.getAvailableBalance(token) > tokenAmount, "Bankroll has insufficient balance");
 
         // Update pool
+        StakingPool storage pool = pools[token];
         updatePool(token);
 
         // Calculate pending rewards
@@ -259,12 +267,6 @@ contract VaultLP is ReentrancyGuard, Ownable {
         if (pending > 0) {
             user.pendingRewards += pending;
         }
-
-        // Calculate normalized amount to withdraw based on shares
-        uint256 normalizedAmount = calculateTokenAmount(token, shares);
-        
-        // Convert normalized amount back to token's native decimals
-        uint256 tokenAmount = denormalizeAmount(token, normalizedAmount);
 
         // Update user info
         user.amount -= normalizedAmount;
@@ -275,21 +277,12 @@ contract VaultLP is ReentrancyGuard, Ownable {
         pool.totalStaked -= normalizedAmount;
         pool.totalShares -= shares;
 
+        // Withdraw from bankroll using withdraw function
+        bool transferred = bankroll.withdrawBankroll(msg.sender, token, tokenAmount);
+        require(transferred, "Withdrawal from bankroll failed");
+
         // Burn LP tokens
         lpToken.burn(msg.sender, shares);
-
-        // Withdraw from bankroll using execute function
-        if (token == address(0)) {
-            bytes memory data = "";
-            bankroll.execute(msg.sender, tokenAmount, data);
-        } else {
-            bytes memory data = abi.encodeWithSignature(
-                "transfer(address,uint256)",
-                msg.sender,
-                tokenAmount
-            );
-            bankroll.execute(token, 0, data);
-        }
 
         emit Withdrawn(msg.sender, token, tokenAmount, shares);
     }
@@ -356,7 +349,14 @@ contract VaultLP is ReentrancyGuard, Ownable {
         }
 
         uint256 timeElapsed = block.timestamp - pool.lastUpdateTime;
-        uint256 reward = timeElapsed * pool.rewardRate;
+        // Normalize rewardRate to 18 decimals for accurate per-share accounting
+        uint256 normalizedRewardRate = pool.rewardRate;
+        if (pool.decimals < 18) {
+            normalizedRewardRate = pool.rewardRate * (10 ** (18 - pool.decimals));
+        } else if (pool.decimals > 18) {
+            normalizedRewardRate = pool.rewardRate / (10 ** (pool.decimals - 18));
+        }
+        uint256 reward = timeElapsed * normalizedRewardRate;
 
         pool.accRewardPerShare += (reward * 1e18) / pool.totalShares;
         pool.lastUpdateTime = block.timestamp;
@@ -484,10 +484,18 @@ contract VaultLP is ReentrancyGuard, Ownable {
         UserInfo memory userInf = userInfo[token][user];
 
         uint256 accRewardPerShare = pool.accRewardPerShare;
-        
+
+        // Normalize rewardRate to 18 decimals for calculation
+        uint256 normalizedRewardRate = pool.rewardRate;
+        if (pool.decimals < 18) {
+            normalizedRewardRate = pool.rewardRate * (10 ** (18 - pool.decimals));
+        } else if (pool.decimals > 18) {
+            normalizedRewardRate = pool.rewardRate / (10 ** (pool.decimals - 18));
+        }
+
         if (block.timestamp > pool.lastUpdateTime && pool.totalShares > 0) {
             uint256 timeElapsed = block.timestamp - pool.lastUpdateTime;
-            uint256 reward = timeElapsed * pool.rewardRate;
+            uint256 reward = timeElapsed * normalizedRewardRate;
             accRewardPerShare += (reward * 1e18) / pool.totalShares;
         }
 

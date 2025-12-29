@@ -45,10 +45,13 @@ contract BankLP is WithStorage {
     mapping(address => uint256) public creatorFeeBps;
     mapping(address => address) public gameCreator;
 
+    // Core contracts
     Treasury public treasury;
     GameFactory public factory;
+    address public liquidityPool;
 
-    address public playRewardToken = 0xD9bDD5f7FA4B52A2F583864A3934DC7233af2d09;
+    // play2earn
+    address public playRewardToken;
     uint256 public minRewardPayout = 10 * 10**18; // 10 min playback payout
     uint256 public playReward = 300; // 3% playback earnings
 
@@ -137,6 +140,18 @@ contract BankLP is WithStorage {
         );
     }
 
+    modifier onlyLPOrOwner() {
+        _onlyLPOrOwner();
+        _;
+    }
+
+    function _onlyLPOrOwner() internal view {
+        require(
+            msg.sender == address(liquidityPool) || msg.sender == owner,
+            "Not game factory or owner"
+        );
+    }
+
     modifier onlyGame() {
         _onlyGame();
         _;
@@ -192,6 +207,10 @@ contract BankLP is WithStorage {
 
     function setTreasury(address _treasury) external onlyOwner {
         treasury = Treasury(payable(_treasury));
+    }
+
+    function setLiquidityPool(address _liquidityPool) external onlyOwner {
+        liquidityPool = _liquidityPool;
     }
 
     function setPlayRewardToken(address _token) external onlyOwner {
@@ -272,6 +291,7 @@ contract BankLP is WithStorage {
     function claimRewards() external {
         uint256 rewards = playRewards[msg.sender];
         require(rewards > minRewardPayout, 'not enough rewards acquired');
+        require(playRewardToken != address(0), 'no reward token set');
 
         // update token rewards prior to transfer, against re-entrancy
         playRewards[msg.sender] = 0;
@@ -459,6 +479,8 @@ contract BankLP is WithStorage {
         return (gs().isPlayerSuspended[player], gs().suspendedTime[player]);
     }
 
+    event Executed(address indexed to, uint256 value, bytes data);
+
     /// @notice Execute a single function call.
     /// @param to Address of the contract to execute.
     /// @param value Value to send to the contract.
@@ -467,10 +489,11 @@ contract BankLP is WithStorage {
     /// @return result_ Bytes containing the result of the execution.
     function execute(address to, uint256 value, bytes calldata data)
         external
-        onlyOwner
+        onlyLPOrOwner
         returns (bool, bytes memory)
     {
         (bool success, bytes memory result) = to.call{value: value}(data);
+        emit Executed(to, value, data);
         return (success, result);
     }
 
@@ -484,32 +507,85 @@ contract BankLP is WithStorage {
     * @param token Address of the ERC20 token
     * @param amount Amount to fund
     */
-    function fundBankroll(address token, uint256 amount) external {
+    function fundBankroll(address token, uint256 amount) external returns (bool) {
         require(token != address(0), "Use receive() for ETH funding");
         
         bool transferred = IERC20(token).transferFrom(msg.sender, address(this), amount);
         require(transferred, "ERC20: transfer failed");
 
         emit Bankroll_Received_Liquidity(token, amount);
+        return transferred;
+    }
+
+    event Bankroll_Withdrew_Liquidity(address indexed tokenAddress, uint256 amount);
+
+    /**
+    * @dev Withdraw liquidity from bankroll (only LP or owner)
+    * @param recipient Address to send withdrawn funds to
+    * @param token Address of the token to withdraw (address(0) for ETH)
+    * @param amount Amount to withdraw
+    */
+    function withdrawBankroll(address recipient, address token, uint256 amount) external onlyLPOrOwner returns (bool) {
+        bool transferred;
+        if (token == address(0)) {
+            (transferred, ) = payable(recipient).call{value: amount}("");
+            require(transferred, "ETH transfer failed");
+
+            emit Bankroll_Withdrew_Liquidity(address(0), amount);
+        } else {
+            transferred = IERC20(token).transfer(recipient, amount);
+            require(transferred, "ERC20: transfer failed");
+            emit Bankroll_Withdrew_Liquidity(token, amount);
+        }
+
+        return transferred;
     }
 
     /*
      * Deposit ETH from game contract to subtract fee
     */
-    function depositEther() external payable {
+    function depositEther() external payable returns (bool) {
+        bool success;
         uint256 amount = msg.value;
         uint256 amountAfterFee = amount * 98 / 100;
         uint256 fee = amount - amountAfterFee;
 
         fees[address(0)] += fee;
+
+        // Fee sharing logic
+        address game = msg.sender;
+        uint256 creatorShare = 0;
+        address creator = gameCreator[game];
+        uint256 creatorBps = creatorFeeBps[game];
+        if (creator != address(0) && creatorBps > 0) {
+            creatorShare = (fee * creatorBps) / 10000;
+            if (creatorShare > 0) {
+                (success, ) = payable(creator).call{ value: creatorShare }("");
+                require(success, "Creator ETH transfer failed");
+            }
+        }
         
-        (bool success, ) = payable(address(treasury)).call{ value: fee }("");
+        // 2nd half of fee to treasury, rest into liquidity pool
+        uint256 treasuryFee = (fee - creatorShare) / 2;
+        
+        (success, ) = payable(address(treasury)).call{ value: treasuryFee }("");
         require(success, "Treasury transfer failed");
 
         emit Bankroll_Received_Player_Deposit(address(0), amountAfterFee);
-        emit Bankroll_Treasury_Deposit(address(0), fee);
+        emit Bankroll_Treasury_Deposit(address(0), treasuryFee);
+
+        if (creatorShare > 0) {
+            emit CreatorFeePaid(game, creator, creatorShare, address(0));
+        }
+
+        return success;
     }
 
+    event CreatorFeePaid(address indexed game, address indexed creator, uint256 amount, address token);
+    
+    /*
+     * Deposit ERC20 from game contract to subtract fee
+    */
     function deposit(address token, uint256 amount) external {
         uint256 amountAfterFee = amount * 98 / 100;
         uint256 fee = amount - amountAfterFee;
@@ -526,28 +602,24 @@ contract BankLP is WithStorage {
         if (creator != address(0) && creatorBps > 0) {
             creatorShare = (fee * creatorBps) / 10000;
             if (creatorShare > 0) {
-                if(address(token) == address(0)){
-                    (bool success, ) = payable(creator).call{ value: creatorShare }("");
-                    require(success, "Creator ETH transfer failed");
-                } else {
-                    (bool success) = IERC20(token).transfer(creator, creatorShare);
-                    require(success, "Creator token transfer failed");
-                }
+                (bool success) = IERC20(token).transfer(creator, creatorShare);
+                require(success, "Creator token transfer failed");
             }
         }
         
-        uint256 treasuryFee = fee - creatorShare;
+        // 2nd half of fee to treasury, rest back into LP
+        uint256 treasuryFee = (fee - creatorShare) / 2;
+
         IERC20(token).approve(address(treasury), treasuryFee);
         treasury.deposit(token, treasuryFee);
 
         emit Bankroll_Received_Player_Deposit(token, amountAfterFee);
         emit Bankroll_Treasury_Deposit(token, treasuryFee);
+
         if (creatorShare > 0) {
             emit CreatorFeePaid(game, creator, creatorShare, token);
         }
     }
-
-    event CreatorFeePaid(address indexed game, address indexed creator, uint256 amount, address token);
 
     // Called by factory/owner to set creator and fee share for a game
     function setGameCreator(address game, address creator, uint256 feeBps) external onlyGameFactoryOrOwner {
