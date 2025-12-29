@@ -272,8 +272,8 @@ contract BankrollMigrator {
      * @notice Get migration status
      */
     function getMigrationStatus() external view returns (
-        bool started,
-        bool completed,
+        bool migrationStarted_,
+        bool migrationCompleted_,
         uint256 tokensMigrated,
         uint256 gamesToMigrate_
     ) {

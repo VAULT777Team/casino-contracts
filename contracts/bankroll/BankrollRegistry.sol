@@ -100,8 +100,12 @@ contract BankrollRegistry {
     );
     
     modifier onlyGovernance() {
-        require(msg.sender == governance, "Only governance");
+        _onlyGovernance();
         _;
+    }
+
+    function _onlyGovernance() internal view {
+        require(msg.sender == governance, "Only governance");
     }
     
     constructor(
