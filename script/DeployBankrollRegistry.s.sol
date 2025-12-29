@@ -28,7 +28,7 @@ contract DeployBankrollRegistry is Script {
         console.log("Treasury deployed:", address(treasury));
         
         // 2. Deploy initial BankLP (will set registry after registry deployment)
-        BankLP bankroll = new BankLP(address(treasury), address(0));
+        BankLP bankroll = new BankLP(address(treasury), address(0), address(0));
         console.log("Initial BankLP deployed:", address(bankroll));
         
         // 3. Deploy BankrollRegistry with initial bankroll
@@ -77,7 +77,7 @@ contract MigrateBankroll is Script {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         
         // Load existing addresses from environment
-        address oldBankrollAddress = vm.envAddress("OLD_BANKROLL");
+        address payable oldBankrollAddress = payable(vm.envAddress("OLD_BANKROLL"));
         address registryAddress = vm.envAddress("REGISTRY");
         address[] memory games = vm.envAddress("GAMES", ",");
         address[] memory tokens = vm.envAddress("TOKENS", ",");
@@ -98,7 +98,8 @@ contract MigrateBankroll is Script {
         // 2. Deploy new bankroll
         BankLP newBankroll = new BankLP(
             address(newTreasury),
-            registryAddress
+            registryAddress,
+            address(0)
         );
         console.log("New BankLP deployed:", address(newBankroll));
         

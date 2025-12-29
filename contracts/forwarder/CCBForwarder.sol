@@ -20,15 +20,15 @@ contract CrossChainBankForwarder {
     
     BankrollRegistry registry;
 
-    address immutable i_router;
-    address immutable i_link;
+    address immutable I_ROUTER;
+    address immutable I_LINK;
 
     event MessageSent(bytes32 messageId);
     
     constructor(BankrollRegistry _registry, address _router, address _link) {
         registry = _registry;
-        i_router = _router;
-        i_link = _link;
+        I_ROUTER = _router;
+        I_LINK = _link;
     }
 
     receive() external payable {}
@@ -43,16 +43,16 @@ contract CrossChainBankForwarder {
             data: abi.encode(messageText),
             tokenAmounts: new Client.EVMTokenAmount[](0),
             extraArgs: Client._argsToBytes(Client.GenericExtraArgsV2({gasLimit: 200_000, allowOutOfOrderExecution: true})),
-            feeToken: payFeesIn == PayFeesIn.LINK ? i_link : address(0)
+            feeToken: payFeesIn == PayFeesIn.LINK ? I_LINK : address(0)
         });
 
-        uint256 fee = IRouterClient(i_router).getFee(destinationChainSelector, message);
+        uint256 fee = IRouterClient(I_ROUTER).getFee(destinationChainSelector, message);
 
         if (payFeesIn == PayFeesIn.LINK) {
-            IERC20(i_link).approve(i_router, fee);
-            messageId = IRouterClient(i_router).ccipSend(destinationChainSelector, message);
+            IERC20(I_LINK).approve(I_ROUTER, fee);
+            messageId = IRouterClient(I_ROUTER).ccipSend(destinationChainSelector, message);
         } else {
-            messageId = IRouterClient(i_router).ccipSend{value: fee}(destinationChainSelector, message);
+            messageId = IRouterClient(I_ROUTER).ccipSend{value: fee}(destinationChainSelector, message);
         }
 
         emit MessageSent(messageId);

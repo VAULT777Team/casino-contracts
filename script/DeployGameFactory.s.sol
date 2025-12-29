@@ -35,7 +35,7 @@ contract DeployGameFactory is Script {
         }
 
         // Deploy GameFactory
-        GameFactory factory = new GameFactory(nft, registry, banklp);
+        GameFactory factory = new GameFactory(nft, registry);
         console.log("GameFactory deployed:", address(factory));
 
         vm.stopBroadcast();
