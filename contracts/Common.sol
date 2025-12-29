@@ -23,7 +23,9 @@ interface IBankRoll {
     function setGame(address, bool) external;
     function getIsGame(address game) external view returns (bool);
 
+    function depositEther() external payable returns (bool);
     function deposit(address token, uint256 amount) external;
+    
     function setTokenAddress(address, bool) external;
     function setWrappedAddress(address)     external;
 
@@ -185,11 +187,9 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
     ) internal {
 
         if (tokenAddress == address(0)) {
-            (bool success, ) = payable(address(Bankroll)).call{value: amount}(
-                ""
-            );
+            (bool success) = Bankroll.depositEther{value: amount}();
             if (!success) {
-                revert RefundFailed();
+                revert TransferFailed();
             }
         } else {
             IERC20(tokenAddress).approve(address(Bankroll), amount);
@@ -369,9 +369,7 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
         address tokenAddress
     ) internal {
         if (tokenAddress == address(0)) {
-            (bool success, ) = payable(address(Bankroll)).call{value: amount}(
-                ""
-            );
+            (bool success) = Bankroll.depositEther{value: amount}();
             if (!success) {
                 revert TransferFailed();
             }
@@ -411,7 +409,7 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
                 numWords: numWords,
                 extraArgs: VRFV2PlusClient._argsToBytes(
                     VRFV2PlusClient.ExtraArgsV1({nativePayment: true})
-                ) // new parameter
+                )
             })
         );
     }
