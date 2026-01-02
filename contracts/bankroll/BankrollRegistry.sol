@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.0;
 
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { IBankLP } from "./interfaces/IBankLP.sol";
+
 /**
  * @title BankrollRegistry
  * @notice Immutable registry that tracks all bankroll and treasury deployments
@@ -16,14 +19,13 @@ contract BankrollRegistry {
         uint256 deactivatedAt;
         bool isActive;
         string version;
-        bytes32 migrationReason; // keccak256 hash of migration reason
+        string migrationReason; // human-readable reason
     }
     
     struct MigrationStats {
         address token;
         uint256 balanceMigrated;
         uint256 reservedFunds;
-        uint256 totalUsers;
     }
     
     // Array of all bankroll deployments (historical record)
@@ -46,6 +48,7 @@ contract BankrollRegistry {
         address indexed bankrollAddress,
         address indexed treasuryAddress,
         string version,
+        string reason,
         uint256 timestamp
     );
     
@@ -59,7 +62,7 @@ contract BankrollRegistry {
     event BankrollDeactivated(
         uint256 indexed index,
         address indexed bankrollAddress,
-        bytes32 reason,
+        string reason,
         uint256 timestamp
     );
     
@@ -117,8 +120,7 @@ contract BankrollRegistry {
         
         // Register the first bankroll
         _registerBankroll(_initialBankroll, _initialTreasury, _version, "Initial deployment");
-        
-        emit BankrollActivated(0, _initialBankroll, address(0), block.timestamp);
+        _activateBankroll(0);
     }
     
     /**
@@ -148,7 +150,7 @@ contract BankrollRegistry {
         require(!isKnownBankroll[bankroll], "Bankroll already registered");
         
         index = bankrollHistory.length;
-        
+
         bankrollHistory.push(BankrollInfo({
             bankrollAddress: bankroll,
             treasuryAddress: treasury,
@@ -156,7 +158,7 @@ contract BankrollRegistry {
             deactivatedAt: 0,
             isActive: false,
             version: version,
-            migrationReason: keccak256(abi.encodePacked(reason))
+            migrationReason: reason
         }));
         
         bankrollToIndex[bankroll] = index;
@@ -167,6 +169,7 @@ contract BankrollRegistry {
             bankroll,
             treasury,
             version,
+            reason,
             block.timestamp
         );
         
@@ -178,6 +181,10 @@ contract BankrollRegistry {
      * @param index Index of the bankroll to activate
      */
     function activateBankroll(uint256 index) external onlyGovernance {
+        _activateBankroll(index);
+    }
+
+    function _activateBankroll(uint256 index) internal {
         require(index < bankrollHistory.length, "Invalid index");
         require(!bankrollHistory[index].isActive, "Already active");
         
@@ -191,7 +198,7 @@ contract BankrollRegistry {
                 emit BankrollDeactivated(
                     currentBankrollIndex,
                     current.bankrollAddress,
-                    keccak256("Migrated to new version"),
+                    "Migrated to new version",
                     block.timestamp
                 );
             }
@@ -239,6 +246,34 @@ contract BankrollRegistry {
         require(toIndex < bankrollHistory.length, "Invalid to index");
         
         for (uint256 i = 0; i < stats.length; i++) {
+            if(stats[i].token == address(0)) {
+                IBankLP prevBankLP = IBankLP(bankrollHistory[fromIndex].bankrollAddress);
+
+                (bool success, ) = prevBankLP.execute(
+                    bankrollHistory[toIndex].bankrollAddress,
+                    stats[i].balanceMigrated,
+                    new bytes(0)
+                );
+
+                require(success, "Ether migration transfer failed");
+            } else {
+                IBankLP prevBankLP = IBankLP(bankrollHistory[fromIndex].bankrollAddress);
+                uint256 tokenBalance = IERC20(stats[i].token).balanceOf(bankrollHistory[toIndex].bankrollAddress);
+                require(stats[i].balanceMigrated <= tokenBalance, "Invalid token migration amount");
+
+                (bool success, ) = prevBankLP.execute(
+                    stats[i].token,
+                    0,
+                    abi.encodeWithSignature(
+                        "transfer(address, uint256)",
+                        bankrollHistory[toIndex].bankrollAddress,
+                        stats[i].balanceMigrated
+                    )
+                );
+
+                require(success, "Token migration transfer failed");
+            }
+
             emit MigrationCompleted(
                 fromIndex,
                 toIndex,
@@ -294,7 +329,7 @@ contract BankrollRegistry {
         emit BankrollDeactivated(
             index,
             info.bankrollAddress,
-            keccak256(abi.encodePacked(reason)),
+            reason,
             block.timestamp
         );
     }

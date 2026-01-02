@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import {
-    Common, IBankRoll,
+    Common, IBankLP, IBankrollRegistry,
     ChainSpecificUtil,
     IERC20, SafeERC20,
     VRFConsumerBaseV2Plus, IVRFCoordinatorV2Plus,
@@ -18,12 +18,12 @@ contract AmericanRoulette is Common {
     using SafeERC20 for IERC20;
 
     constructor(
-        address _bankroll,
+        address _registry,
         address _vrf,
         address link_eth_feed,
         address _forwarder
     ) VRFConsumerBaseV2Plus(_vrf) {
-        Bankroll        = IBankRoll(_bankroll);
+        b_registry      = IBankrollRegistry(_registry);
         ChainLinkVRF    = _vrf;
         s_Coordinator   = IVRFCoordinatorV2Plus(_vrf);
         LINK_ETH_FEED   = IDecimalAggregator(link_eth_feed);
@@ -341,8 +341,8 @@ contract AmericanRoulette is Common {
         address tokenAddress
     ) internal view {
         uint256 balance = tokenAddress == address(0)
-            ? address(Bankroll).balance
-            : IERC20(tokenAddress).balanceOf(address(Bankroll));
+            ? address(Bankroll()).balance
+            : IERC20(tokenAddress).balanceOf(address(Bankroll()));
 
         uint256 maxWager = (balance * 1122448) / 100000000;
         uint256 exposure = wager * numBets;

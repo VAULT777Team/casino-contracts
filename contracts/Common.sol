@@ -9,57 +9,8 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.
 import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ChainSpecificUtil} from "./ChainSpecificUtil.sol";
 
-interface IBankRoll {
-    function addPlayerReward(
-        address player,
-        uint256 amount
-    ) external;
-    function minRewardPayout()      external view returns (uint256);
-    function getPlayerReward()      external view returns (uint256);
-    function claimRewards()         external;
-    function playRewards(address)   external view returns (uint256);
-    function getPlayerRewards()     external view returns (uint256);
-
-    function setGame(address, bool) external;
-    function getIsGame(address game) external view returns (bool);
-
-    function depositEther() external payable returns (bool);
-    function deposit(address token, uint256 amount) external;
-    
-    function setTokenAddress(address, bool) external;
-    function setWrappedAddress(address)     external;
-
-    function getIsValidWager(
-        address game,
-        address tokenAddress
-    ) external view returns (bool);
-
-    function transferPayout(
-        address player,
-        uint256 payout,
-        address token
-    ) external;
-
-    function getOwner() external view returns (address);
-
-    function isPlayerSuspended(
-        address player
-    ) external view returns (bool, uint256);
-
-    // reserves
-    function getAvailableBalance(address token) external view returns (uint256);
-
-    function reserveFunds(
-        address token, 
-        uint256 amount
-    ) external;
-
-    function releaseFunds(
-        address token,
-        uint256 amount
-    ) external;
-
-}
+import {IBankrollRegistry} from "./bankroll/interfaces/IBankrollRegistry.sol";
+import {IBankLP} from "./bankroll/interfaces/IBankLP.sol";
 
 abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
     using SafeERC20 for IERC20;
@@ -69,7 +20,7 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
     address public _trustedForwarder;
 
     IDecimalAggregator      public LINK_ETH_FEED;
-    IBankRoll               public Bankroll;
+    IBankrollRegistry       internal b_registry;
     IVRFCoordinatorV2Plus   internal s_Coordinator;
     
     uint256 subscriptionId  = uint256(77667707628007624636163514136218109527264531590891917311719822980101224786380);
@@ -88,10 +39,14 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
     event WagerTransferred(address game, address token, address player, uint256 amount);
     event FeeTransferred(address game, address player, uint256 amount);
 
-    function setBankroll(address _bankRoll) external onlyOwner {
-        Bankroll = IBankRoll(_bankRoll);
+    function Bankroll() internal view returns (IBankLP) {
+        (address bankroll,,,) = b_registry.getCurrentBankroll();
+        return IBankLP(bankroll);
     }
 
+    function setRegistry(address _registry) external onlyOwner {
+        b_registry = IBankrollRegistry(_registry);
+    }
 
     /**
      * @dev helper function to reserve max possible payout from bankroll
@@ -99,10 +54,10 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
      * @param maxPayout Total amount to release from reserve
     */
     function _reserveMaxPayout(address tokenAddress, uint256 maxPayout) internal {
-        uint256 available = Bankroll.getAvailableBalance(tokenAddress);
+        uint256 available = Bankroll().getAvailableBalance(tokenAddress);
         require(available >= maxPayout, "Insufficient bankroll for max payout");
 
-        Bankroll.reserveFunds(tokenAddress, maxPayout);
+        Bankroll().reserveFunds(tokenAddress, maxPayout);
     }
 
     /**
@@ -111,7 +66,7 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
      * @param amount total amount to release from reserves
      */
     function _releaseReserve(address tokenAddress, uint256 amount) internal {
-        Bankroll.releaseFunds(tokenAddress, amount);
+        Bankroll().releaseFunds(tokenAddress, amount);
     }
 
     /**
@@ -128,9 +83,9 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
         address msgSender
     ) internal returns (uint256 VRFfee) {
         if (wager == 0) revert ZeroWager();
-        if (!Bankroll.getIsValidWager(address(this), tokenAddress)) revert NotApprovedBankroll();
+        if (!Bankroll().getIsValidWager(address(this), tokenAddress)) revert NotApprovedBankroll();
         
-        (bool suspended, uint256 suspendedTime) = Bankroll.isPlayerSuspended(
+        (bool suspended, uint256 suspendedTime) = Bankroll().isPlayerSuspended(
             msgSender
         );
 
@@ -160,10 +115,10 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
         }
 
         // play2earn
-        uint256 playReward = Bankroll.getPlayerReward();
+        uint256 playReward = Bankroll().getPlayerReward();
         if(playReward > 0){
             uint256 reward = (wager * playReward) / 1000;
-            Bankroll.addPlayerReward(msgSender, reward);
+            Bankroll().addPlayerReward(msgSender, reward);
         }
 
         VRFFees += VRFfee;
@@ -187,13 +142,13 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
     ) internal {
 
         if (tokenAddress == address(0)) {
-            (bool success) = Bankroll.depositEther{value: amount}();
+            (bool success) = Bankroll().depositEther{value: amount}();
             if (!success) {
                 revert TransferFailed();
             }
         } else {
-            IERC20(tokenAddress).approve(address(Bankroll), amount);
-            Bankroll.deposit(tokenAddress, amount);
+            IERC20(tokenAddress).approve(address(Bankroll()), amount);
+            Bankroll().deposit(tokenAddress, amount);
         }
 
         emit WagerTransferred(
@@ -216,7 +171,6 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
 
         uint256 l1CostWei = (ChainSpecificUtil.getCurrentTxL1GasFees() *
             l1Multiplier) / 10;
-
 
         fee =
             tx.gasprice *
@@ -260,8 +214,8 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
      * Can only be called by owner
      */
     function transferFees(address to) external nonReentrant {
-        if (msg.sender != Bankroll.getOwner()) {
-            revert NotOwner(Bankroll.getOwner(), msg.sender);
+        if (msg.sender != Bankroll().getOwner()) {
+            revert NotOwner(Bankroll().getOwner(), msg.sender);
         }
         uint256 fee = VRFFees;
         VRFFees = 0;
@@ -286,7 +240,7 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
         address tokenAddress,
         uint256 wager
     ) internal {
-        if (!Bankroll.getIsValidWager(address(this), tokenAddress)) {
+        if (!Bankroll().getIsValidWager(address(this), tokenAddress)) {
             revert NotApprovedBankroll();
         }
         if (tokenAddress == address(0)) {
@@ -312,7 +266,7 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
         uint256 wager,
         uint256 gasAmount
     ) internal {
-        if (!Bankroll.getIsValidWager(address(this), tokenAddress)) {
+        if (!Bankroll().getIsValidWager(address(this), tokenAddress)) {
             revert NotApprovedBankroll();
         }
 
@@ -369,13 +323,13 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
         address tokenAddress
     ) internal {
         if (tokenAddress == address(0)) {
-            (bool success) = Bankroll.depositEther{value: amount}();
+            (bool success) = Bankroll().depositEther{value: amount}();
             if (!success) {
                 revert TransferFailed();
             }
         } else {
-            IERC20(tokenAddress).approve(address(Bankroll), amount);
-            Bankroll.deposit(tokenAddress, amount);
+            IERC20(tokenAddress).approve(address(Bankroll()), amount);
+            Bankroll().deposit(tokenAddress, amount);
         }
     }
 
@@ -390,7 +344,7 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
         uint256 payout,
         address tokenAddress
     ) internal {
-        Bankroll.transferPayout(player, payout, tokenAddress);
+        Bankroll().transferPayout(player, payout, tokenAddress);
     }
 
     /**

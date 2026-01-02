@@ -2,31 +2,8 @@
 pragma solidity ^0.8.0;
 
 import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-
-interface IBankLP {
-    function getAvailableBalance(address token) external view returns (uint256);
-    function reservedFunds(address token) external view returns (uint256);
-    function execute(address to, uint256 value, bytes calldata data) external returns (bool, bytes memory);
-    function setGame(address game, bool isValid) external;
-    function setTokenAddress(address tokenAddress, bool isValid) external;
-}
-
-interface IBankrollRegistry {
-    struct MigrationStats {
-        address token;
-        uint256 balanceMigrated;
-        uint256 reservedFunds;
-        uint256 totalUsers;
-    }
-    
-    function recordMigration(
-        uint256 fromIndex,
-        uint256 toIndex,
-        MigrationStats[] calldata stats
-    ) external;
-    
-    function bankrollToIndex(address bankroll) external view returns (uint256);
-}
+import {IBankrollRegistry} from "./interfaces/IBankrollRegistry.sol";
+import {IBankLP} from "./interfaces/IBankLP.sol";
 
 /**
  * @title BankrollMigrator

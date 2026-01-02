@@ -8,13 +8,8 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
-interface IBankLP {
-    function fundBankroll(address token, uint256 amount) external returns (bool);
-    function withdrawBankroll(address to, address token, uint256 amount) external returns (bool);
-
-    function getAvailableBalance(address token) external view returns (uint256);
-    function execute(address to, uint256 value, bytes calldata data) external returns (bool, bytes memory);
-}
+import {IBankrollRegistry} from "../interfaces/IBankrollRegistry.sol";
+import {IBankLP} from "../interfaces/IBankLP.sol";
 
 /**
  * @title BankrollLP Token
@@ -55,7 +50,7 @@ contract VaultLP is ReentrancyGuard, Ownable {
 
     // Core contracts
     HouseLPToken    public lpToken;
-    IBankLP         public bankroll;
+    IBankrollRegistry         public bankrollRegistry;
 
     // Staking state per token
     struct StakingPool {
@@ -105,11 +100,11 @@ contract VaultLP is ReentrancyGuard, Ownable {
 
     constructor(
         address _lpToken,
-        address _bankroll,
+        address _bankrollRegistry,
         address _feeRecipient
     ) {
         lpToken = HouseLPToken(_lpToken);
-        bankroll = IBankLP(_bankroll);
+        bankrollRegistry = IBankrollRegistry(_bankrollRegistry);
         feeRecipient = _feeRecipient;
         initialEpoch = block.timestamp;
     }
@@ -153,6 +148,11 @@ contract VaultLP is ReentrancyGuard, Ownable {
         emit PoolUpdated(token, newRate);
     }
 
+    function setFeeRecipient(address newRecipient) external onlyOwner {
+        require(newRecipient != address(0), "Invalid address");
+        feeRecipient = newRecipient;
+    }
+
     function setEpochRate(uint256 newEpochRate) external onlyOwner {
         require(newEpochRate > 0, "Invalid epoch rate");
         epochRate = newEpochRate;
@@ -182,6 +182,10 @@ contract VaultLP is ReentrancyGuard, Ownable {
     function deposit(address token, uint256 amount) external payable nonReentrant {
         require(isSupportedToken[token], "Token not supported");
         require(amount > 0, "Amount must be > 0");
+
+        (address bankroll, , , uint256 activatedAt) = bankrollRegistry.getCurrentBankroll();
+        require(bankroll != address(0), "Bankroll not set");
+        require(activatedAt > 0, "Bankroll not active");
 
         StakingPool storage pool = pools[token];
         require(pool.isActive, "Pool not active");
@@ -214,7 +218,7 @@ contract VaultLP is ReentrancyGuard, Ownable {
             // Reset allowance to 0 first to avoid SafeERC20 non-zero to non-zero error
             IERC20(token).safeApprove(address(bankroll), 0);
             IERC20(token).safeApprove(address(bankroll), amount);
-            bool funded = bankroll.fundBankroll(token, amount);
+            bool funded = IBankLP(bankroll).fundBankroll(token, amount);
             require(funded, "Funding bankroll failed");
         }
 
@@ -256,8 +260,15 @@ contract VaultLP is ReentrancyGuard, Ownable {
         // Check if we're in a valid withdrawal window
         require(isInWithdrawWindow(), "Not in valid withdrawal window");
         require(block.timestamp >= user.lastDepositTime + claimRate, "Lock period not met");
-        require(bankroll.getAvailableBalance(token) > tokenAmount, "Bankroll has insufficient balance");
 
+        (address bankrollAddr, , , uint256 activatedAt) = bankrollRegistry.getCurrentBankroll();
+        require(bankrollAddr != address(0), "Bankroll not set");
+        require(activatedAt > 0, "Bankroll not active");
+
+        IBankLP bankroll = IBankLP(bankrollAddr);
+        //require(bankroll.getIsValidWager(token), "Invalid token for rewards");
+        require(bankroll.getAvailableBalance(token) > tokenAmount, "Bankroll has insufficient balance");
+        
         // Update pool
         StakingPool storage pool = pools[token];
         updatePool(token);
@@ -277,10 +288,14 @@ contract VaultLP is ReentrancyGuard, Ownable {
         pool.totalStaked -= normalizedAmount;
         pool.totalShares -= shares;
 
+
+        // claim rewards before withdrawing
+        _claimRewards(token);
+
         // Withdraw from bankroll using withdraw function
         bool transferred = bankroll.withdrawBankroll(msg.sender, token, tokenAmount);
         require(transferred, "Withdrawal from bankroll failed");
-
+        
         // Burn LP tokens
         lpToken.burn(msg.sender, shares);
 
@@ -292,6 +307,10 @@ contract VaultLP is ReentrancyGuard, Ownable {
      * @param token Address of token pool
      */
     function claimRewards(address token) external nonReentrant {
+        _claimRewards(token);
+    }
+
+    function _claimRewards(address token) internal {
         require(isSupportedToken[token], "Token not supported");
 
         UserInfo storage user = userInfo[token][msg.sender];
@@ -300,11 +319,19 @@ contract VaultLP is ReentrancyGuard, Ownable {
         // Update pool
         updatePool(token);
 
+        (address bankrollAddr, , , uint256 activatedAt) = bankrollRegistry.getCurrentBankroll();
+        require(bankrollAddr != address(0), "Bankroll not set");
+        require(activatedAt > 0, "Bankroll not active");
+
+        IBankLP bankroll = IBankLP(bankrollAddr);
+        //require(bankroll.getIsValidWager(token), "Invalid token for rewards");
+
         // Calculate total rewards
         uint256 pending = (user.shares * pool.accRewardPerShare / 1e18) - user.rewardDebt;
         uint256 totalRewards = user.pendingRewards + pending;
 
         require(totalRewards > 0, "No rewards to claim");
+        require(bankroll.getAvailableBalance(token) > totalRewards, "Bankroll has insufficient balance");
 
         // Apply performance fee
         uint256 fee = (totalRewards * performanceFee) / 10000;
@@ -315,18 +342,13 @@ contract VaultLP is ReentrancyGuard, Ownable {
         user.rewardDebt = user.shares * pool.accRewardPerShare / 1e18;
 
         // Transfer rewards
-        if (token == address(0)) {
-            (bool success, ) = msg.sender.call{value: netRewards}("");
-            require(success, "ETH transfer failed");
-            if (fee > 0) {
-                (bool feeSuccess, ) = feeRecipient.call{value: fee}("");
-                require(feeSuccess, "Fee transfer failed");
-            }
-        } else {
-            IERC20(token).safeTransfer(msg.sender, netRewards);
-            if (fee > 0) {
-                IERC20(token).safeTransfer(feeRecipient, fee);
-            }
+        bool success = bankroll.withdrawBankroll(msg.sender, token, netRewards);
+        require(success, "Withdraw bankroll transfer failed");
+
+        // take fee
+        if (fee > 0) {
+            bool feeSuccess = bankroll.withdrawBankroll(feeRecipient, token, fee);
+            require(feeSuccess, "Fee transfer failed");
         }
 
         emit RewardsClaimed(msg.sender, token, netRewards);

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import {
-    Common, IBankRoll,
+    Common, IBankrollRegistry,
     ChainSpecificUtil,
     IERC20, SafeERC20,
     VRFConsumerBaseV2Plus, IVRFCoordinatorV2Plus,
@@ -16,12 +16,12 @@ contract Plinko is Common {
     using SafeERC20 for IERC20;
 
     constructor(
-        address _bankroll,
+        address _registry,
         address _vrf,
         address link_eth_feed,
         address _forwarder
     ) VRFConsumerBaseV2Plus(_vrf) {
-        Bankroll        = IBankRoll(_bankroll);
+        b_registry      = IBankrollRegistry(_registry);
         ChainLinkVRF    = _vrf;
         s_Coordinator   = IVRFCoordinatorV2Plus(_vrf);
         LINK_ETH_FEED   = IDecimalAggregator(link_eth_feed);
@@ -421,9 +421,9 @@ contract Plinko is Common {
     ) internal view {
         uint256 balance;
         if (tokenAddress == address(0)) {
-            balance = address(Bankroll).balance;
+            balance = address(Bankroll()).balance;
         } else {
-            balance = IERC20(tokenAddress).balanceOf(address(Bankroll));
+            balance = IERC20(tokenAddress).balanceOf(address(Bankroll()));
         }
         uint256 maxWager = (balance * kellyFractions[risk][numRows - 8]) /
             100000000;

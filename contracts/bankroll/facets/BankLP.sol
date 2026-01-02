@@ -7,6 +7,8 @@ import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeE
 import {Treasury } from '../../treasury/Treasury.sol';
 import {GameFactory} from "../../sdk/GameFactory.sol";
 
+import {IBankrollRegistry} from "../interfaces/IBankrollRegistry.sol";
+
 interface IToken is IERC20 {
     function mint(uint256 amount) external;
     function setGovernor(address _governor, bool _value) external;
@@ -14,18 +16,6 @@ interface IToken is IERC20 {
     function mintDaily() external;
 }
 
-/**
- * @title BankrollFacet, Contract responsible for keeping the bankroll and distribute payouts
- */
-
-interface IBankrollRegistry {
-    function getCurrentBankroll() external view returns (
-        address bankroll,
-        address treasury,
-        string memory version,
-        uint256 activatedAt
-    );
-}
 
 contract BankLP is WithStorage {
     using SafeERC20 for IERC20;
@@ -128,6 +118,18 @@ contract BankLP is WithStorage {
         require(msg.sender == owner, "Not an owner");
     }
 
+    modifier onlyRegistryOrOwner() {
+        _onlyRegistryOrOwner();
+        _;
+    }
+
+    function _onlyRegistryOrOwner() internal view {
+        require(
+            msg.sender == registry || msg.sender == owner,
+            "Not bankroll registry or owner"
+        );
+    }
+
     modifier onlyGameFactoryOrOwner() {
         _onlyGameFactoryOrOwner();
         _;
@@ -148,7 +150,7 @@ contract BankLP is WithStorage {
     function _onlyLPOrOwner() internal view {
         require(
             msg.sender == address(liquidityPool) || msg.sender == owner,
-            "Not game factory or owner"
+            "Not LP or owner"
         );
     }
 
@@ -195,6 +197,10 @@ contract BankLP is WithStorage {
         } catch {
             return false;
         }
+    }
+
+    function setRegistry(address _registry) external onlyOwner {
+        registry = _registry;
     }
 
     function setOwner(address _owner) external onlyOwner {
@@ -489,7 +495,7 @@ contract BankLP is WithStorage {
     /// @return result_ Bytes containing the result of the execution.
     function execute(address to, uint256 value, bytes calldata data)
         external
-        onlyLPOrOwner
+        onlyRegistryOrOwner
         returns (bool, bytes memory)
     {
         (bool success, bytes memory result) = to.call{value: value}(data);
@@ -528,11 +534,13 @@ contract BankLP is WithStorage {
     function withdrawBankroll(address recipient, address token, uint256 amount) external onlyLPOrOwner returns (bool) {
         bool transferred;
         if (token == address(0)) {
+            require(reservedFunds[address(0)] + amount <= address(this).balance, "Insufficient available ETH balance");
             (transferred, ) = payable(recipient).call{value: amount}("");
             require(transferred, "ETH transfer failed");
 
             emit Bankroll_Withdrew_Liquidity(address(0), amount);
         } else {
+            require(reservedFunds[token] + amount <= IERC20(token).balanceOf(address(this)), "Insufficient available token balance");
             transferred = IERC20(token).transfer(recipient, amount);
             require(transferred, "ERC20: transfer failed");
             emit Bankroll_Withdrew_Liquidity(token, amount);
