@@ -23,8 +23,8 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
     IBankrollRegistry       internal b_registry;
     IVRFCoordinatorV2Plus   internal s_Coordinator;
     
-    uint256 subscriptionId  = uint256(77667707628007624636163514136218109527264531590891917311719822980101224786380);
-    bytes32 keyHash         = 0x1770bdc7eec7771f7ba4ffd640f34260d7f095b79c92d34a5b2551d6f6cfd2be;
+    uint256 subscriptionId  = uint256(106123518406250644842432780491536243329691309294833751042977289223680227444147);
+    bytes32 keyHash         = 0xe9f223d7d83ec85c4f78042a4845af3a1c8df7757b4997b815ce4b8d07aca68c;
     uint16 reqConfirmations = 3;
     uint32 callbackGasLimit = 2500000;
 
