@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: SEE LICENSE IN LICENSE
 pragma solidity ^0.8.0;
 
-import "@pythnetwork/entropy-sdk-solidity/IEntropy.sol";
-import "@pythnetwork/entropy-sdk-solidity/IEntropyConsumer.sol";
+import {IEntropy} from "@pythnetwork/entropy-sdk-solidity/IEntropy.sol";
+import {IEntropyConsumer} from "@pythnetwork/entropy-sdk-solidity/IEntropyConsumer.sol";
 
 contract VRFConsumer is IEntropyConsumer {
     event RandomnessRequested(uint64 sequenceNumber, bytes32 userRandomNumber);

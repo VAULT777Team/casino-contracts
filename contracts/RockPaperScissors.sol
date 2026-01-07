@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.0;
 
-import "./Common.sol";
+import {
+    Common, IBankrollRegistry,
+    ChainSpecificUtil,
+    IERC20, SafeERC20,
+    VRFConsumerBaseV2Plus, IVRFCoordinatorV2Plus,
+    IDecimalAggregator
+} from "./Common.sol";
 
 /**
  * @title rock paper scissors game, players select an action and play against the VRF actions
@@ -11,12 +17,12 @@ contract RockPaperScissors is Common {
     using SafeERC20 for IERC20;
 
     constructor(
-        address _bankroll,
+        address _registry,
         address _vrf,
         address link_eth_feed,
         address _forwarder
     ) VRFConsumerBaseV2Plus(_vrf) {
-        Bankroll        = IBankRoll(_bankroll);
+        b_registry      = IBankrollRegistry(_registry);
         ChainLinkVRF    = _vrf;
         s_Coordinator   = IVRFCoordinatorV2Plus(_vrf);
         LINK_ETH_FEED   = IDecimalAggregator(link_eth_feed);
@@ -147,16 +153,17 @@ contract RockPaperScissors is Common {
         );
         uint256 id = _requestRandomWords(numBets);
 
-        rockPaperScissorsGames[msgSender] = RockPaperScissorsGame(
-            wager,
-            stopGain,
-            stopLoss,
-            id,
-            tokenAddress,
-            uint64(ChainSpecificUtil.getBlockNumber()),
-            numBets,
-            action
-        );
+        rockPaperScissorsGames[msgSender] = RockPaperScissorsGame({
+            requestID: id,
+            wager: wager,
+            stopGain: stopGain,
+            stopLoss: stopLoss,
+            tokenAddress: tokenAddress,
+            blockNumber: uint64(ChainSpecificUtil.getBlockNumber()),
+            numBets: numBets,
+            action: action
+        });
+
         rockPaperScissorsIDs[id] = msgSender;
 
         emit RockPaperScissors_Play_Event(
@@ -272,33 +279,36 @@ contract RockPaperScissors is Common {
     function _determineRPSResult(
         uint8 playerPick,
         uint8 rngPick
-    ) internal pure returns (uint8) {
+    ) internal pure returns (uint8 result) {
         if (playerPick == rngPick) {
-            return 2;
+            result = 2;
         }
+
         if (playerPick == 0) {
             if (rngPick == 1) {
-                return 0;
+                result = 1;
             } else {
-                return 1;
+                result = 1;
             }
         }
 
         if (playerPick == 1) {
             if (rngPick == 2) {
-                return 0;
+                result = 0;
             } else {
-                return 1;
+                result = 1;
             }
         }
 
         if (playerPick == 2) {
             if (rngPick == 0) {
-                return 0;
+                result = 0;
             } else {
-                return 1;
+                result = 1;
             }
         }
+
+        return result;
     }
 
     /**
@@ -307,9 +317,9 @@ contract RockPaperScissors is Common {
     function _kellyWager(uint256 wager, address tokenAddress) internal view {
         uint256 balance;
         if (tokenAddress == address(0)) {
-            balance = address(Bankroll).balance;
+            balance = address(Bankroll()).balance;
         } else {
-            balance = IERC20(tokenAddress).balanceOf(address(Bankroll));
+            balance = IERC20(tokenAddress).balanceOf(address(Bankroll()));
         }
         uint256 maxWager = (balance * 1683629) / 100000000;
         if (wager > maxWager) {

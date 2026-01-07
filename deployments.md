@@ -7,6 +7,38 @@ This documentation covers the deployed casino smart contracts on the blockchain,
 
 ### Core Infrastructure
 
+#### mainnet
+treasury: 0xa640068Ad560a72E1058f6B5c3ABc0AEFD04758e
+BankLP: 0xdD16142ecE5d21F0141c9a6D5BdF39aFc7632ac2
+USD/ETH feed (pyth aggregatorV3): 0xb6eD8B232EC1766D65748BeD4d2714089cbb54D9
+
+VRF: 0x3C0Ca683b403E37668AE3DC4FB62F4B29B6f7a3e
+forwarder: 0xd1217489b92d4D9179b31FEDCf459C6cC9Ba528a
+
+  Core Infrastructure:
+    BankLP:           0xdD16142ecE5d21F0141c9a6D5BdF39aFc7632ac2
+    VRF:              0x3C0Ca683b403E37668AE3DC4FB62F4B29B6f7a3e
+    LINK/ETH Feed:    0xb6eD8B232EC1766D65748BeD4d2714089cbb54D9
+    Forwarder:        0xd1217489b92d4D9179b31FEDCf459C6cC9Ba528a
+  
+  Game Contracts:
+    CoinFlip:         0x4898c4C044d06A49881aB40A74d6c9e88d613C7E
+    Dice:             0x65D65E4e3f16617852DAe3B115eaF1eEdeD24500
+    VideoPoker:       0x2d669Af48D406c4917f8f78A06EAEa0a450D113e
+    Blackjack:        0x39fd417F6f1c5B22Cc8950CACBa9f23B1e092e19
+    Plinko:           0x4c938b9041A4270b88362Aab7FaC5ad791e05D78
+    Slots:            0x11683055212A41f94e34D3E7F397E4eb9Bd3213b
+    Mines:            0xa69eAdc916b40B80cd6ad4dAf9a841FCda53eA6c
+    Keno:             0xE25e16fCB636dCB7b7DF29Cb31D363622E0744C5
+    RockPaperScissors: 0x70e6D4ce7CF0a6835F51F6D5043E4BB5C8aC2d05
+    AmericanRoulette: 0xf0a1266a1c5b1a3B6DbDAEE6d37F5F21C5cB4a13
+    EuropeanRoulette: 0x5366960FfC8D5f77E1C1C0B9185bf85Db0BF63CA
+
+#### sepolia
+
+Registry: 0xbEEA9c6f64e5E52D0C133857587159106Ec295C0
+VaultLP: 0xC70F45800f12630dC07E4D77540b90F451C060Ec
+
 | Contract | Address | Description |
 |----------|---------|-------------|
 | VRF (Chainlink VRF Coordinator) | `0x5CE8D5A2BC84beb22a398CCA51996F7930313D61` | Chainlink VRF V2+ coordinator for generating verifiable random numbers |

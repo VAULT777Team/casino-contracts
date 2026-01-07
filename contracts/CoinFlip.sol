@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.0;
 
-import "./Common.sol";
+import {
+    Common, IBankLP, IBankrollRegistry,
+    ChainSpecificUtil,
+    IERC20, SafeERC20,
+    VRFConsumerBaseV2Plus, IVRFCoordinatorV2Plus,
+    IDecimalAggregator
+} from "./Common.sol";
 
 /**
  * @title Coin Flip game, players predict if outcome will be heads or tails
@@ -11,12 +17,12 @@ contract CoinFlip is Common {
     using SafeERC20 for IERC20;
 
     constructor(
-        address _bankroll,
+        address _registry,
         address _vrf,
         address link_eth_feed,
         address _forwarder
     ) VRFConsumerBaseV2Plus(_vrf) {
-        Bankroll        = IBankRoll(_bankroll);
+        b_registry      = IBankrollRegistry(_registry);
         ChainLinkVRF    = _vrf;
         s_Coordinator   = IVRFCoordinatorV2Plus(_vrf);
         LINK_ETH_FEED   = IDecimalAggregator(link_eth_feed);
@@ -31,6 +37,7 @@ contract CoinFlip is Common {
         address tokenAddress;
         uint64 blockNumber;
         uint32 numBets;
+        uint256 maxPayout;
         bool isHeads;
     }
 
@@ -130,7 +137,16 @@ contract CoinFlip is Common {
             revert InvalidNumBets(100);
         }
 
-        _kellyWager(wager, numBets, tokenAddress);
+        uint256 maxPayout;
+        if(stopGain > 0){
+            maxPayout = stopGain = (wager * numBets);
+        } else {
+            maxPayout = (wager * numBets * 19800) / 10000;
+        }
+
+        _reserveMaxPayout(tokenAddress, maxPayout);
+
+        _kellyWager(wager, tokenAddress);
         uint256 fee = _transferWager(
             tokenAddress,
             wager * numBets,
@@ -141,16 +157,18 @@ contract CoinFlip is Common {
 
         uint256 id = _requestRandomWords(numBets);
 
-        coinFlipGames[msgSender] = CoinFlipGame(
-            wager,
-            stopGain,
-            stopLoss,
-            id,
-            tokenAddress,
-            uint64(ChainSpecificUtil.getBlockNumber()),
-            numBets,
-            isHeads
-        );
+        coinFlipGames[msgSender] = CoinFlipGame({
+            requestID: id,
+            wager: wager,
+            stopGain: stopGain,
+            stopLoss: stopLoss,
+            tokenAddress: tokenAddress,
+            blockNumber: uint64(ChainSpecificUtil.getBlockNumber()),
+            numBets: numBets,
+            maxPayout: maxPayout,
+            isHeads: isHeads
+        });
+
         coinIDs[id] = msgSender;
 
         emit CoinFlip_Play_Event(
@@ -180,6 +198,8 @@ contract CoinFlip is Common {
 
         uint256 wager = game.wager * game.numBets;
         address tokenAddress = game.tokenAddress;
+
+        _releaseReserve(game.tokenAddress, game.maxPayout);
 
         delete (coinIDs[game.requestID]);
         delete (coinFlipGames[msgSender]);
@@ -237,6 +257,8 @@ contract CoinFlip is Common {
             totalValue -= int256(game.wager);
         }
 
+        _releaseReserve(tokenAddress, game.maxPayout);
+
         payout += (game.numBets - i) * game.wager;
 
         emit CoinFlip_Outcome_Event(
@@ -260,17 +282,11 @@ contract CoinFlip is Common {
      * @dev calculates the maximum wager allowed based on the bankroll size
      take into account numBets
      */
-    function _kellyWager(uint256 wager, uint256 numBets, address tokenAddress) internal view {
-        uint256 balance;
-        if (tokenAddress == address(0)) {
-            balance = address(Bankroll).balance;
-        } else {
-            balance = IERC20(tokenAddress).balanceOf(address(Bankroll));
-        }
+    function _kellyWager(uint256 wager, address tokenAddress) internal view {
+        uint256 balance = Bankroll().getAvailableBalance(tokenAddress);
         uint256 maxWager = (balance * 1122448) / 100000000;
-        uint256 exposure = wager * numBets;
 
-        if(wager > maxWager || exposure > maxWager){
+        if(wager > maxWager){
             revert WagerAboveLimit(wager, maxWager);
         }
     }

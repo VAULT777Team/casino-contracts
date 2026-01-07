@@ -1,4 +1,6 @@
 @chainlink/=node_modules/@chainlink/
+@chainlink/local/=lib/chainlink-local/
+@chainlink-ccip/=lib/chainlink-ccip/chains/evm/contracts/
 @openzeppelin/=node_modules/@openzeppelin/
 hardhat/=lib/forge-std/src/
 forge-std/=lib/forge-std/src/
