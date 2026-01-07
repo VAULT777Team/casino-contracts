@@ -4,10 +4,10 @@ pragma solidity ^0.8.0;
 import "./Common.sol";
 
 /**
- * @title Coin Flip game, players predict if outcome will be heads or tails
+ * @title Rug game, players pool funds and the last players earn the majority of shares
  */
 
-contract CoinFlip is Common {
+contract Rug is Common {
     using SafeERC20 for IERC20;
 
     constructor(

@@ -1,0 +1,4 @@
+@chainlink/=node_modules/@chainlink/
+@openzeppelin/=node_modules/@openzeppelin/
+hardhat/=lib/forge-std/src/
+forge-std/=lib/forge-std/src/

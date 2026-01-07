@@ -87,7 +87,7 @@ contract BankLP is WithStorage {
         treasury = Treasury(payable(_treasury));
     }
 
-    function setOwner(address _owner) external {
+    function setOwner(address _owner) external onlyOwner {
         owner = _owner;
     }
 
@@ -120,11 +120,12 @@ contract BankLP is WithStorage {
         uint256 rewards = playRewards[msg.sender];
         require(rewards > minRewardPayout, 'not enough rewards acquired');
 
+        // update token rewards prior to transfer, against re-entrancy
+        playRewards[msg.sender] = 0;
+
         IToken(playRewardToken).mint(rewards);
-        IToken(playRewardToken).approve(address(this), rewards);
         IToken(playRewardToken).transfer(msg.sender, rewards);
 
-        playRewards[msg.sender] = 0;
 
         emit Bankroll_Player_Rewards_Claimed(msg.sender, rewards);
     }
@@ -333,10 +334,5 @@ contract BankLP is WithStorage {
 
         // 2% to treasury, where 50% of fee should be rebated for play2earn rewards
         treasury.deposit(token, fee);
-    }
-
-    function claimFees(address recipient, address token) external onlyOwner {
-        require(fees[token] > 0, 'Not enough fees acrued');
-        IERC20(token).transfer(recipient, fees[token]);
     }
 }
