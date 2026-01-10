@@ -67,6 +67,12 @@ contract Blackjack is Common {
         uint256 VRFFee
     );
 
+    event Blackjack_Stand_Event(
+        address indexed playerAddress,
+        uint256 requestID,
+        uint256 VRFFee
+    );
+
     event Blackjack_Outcome_Event(
         address indexed playerAddress,
         uint256 wager,
@@ -122,7 +128,7 @@ contract Blackjack is Common {
             msgSender
         );
 
-        uint256 id = _requestRandomWords(3); // 2 player + 1 dealer
+        uint256 id = _requestRandomWords(3); // 2 player + 1 dealer up-card
 
         game.wager = wager;
         game.tokenAddress = tokenAddress;
@@ -175,7 +181,7 @@ contract Blackjack is Common {
         emit Blackjack_Hit_Event(msgSender, 0, 0, false, VRFFee);
     }
 
-    function Blackjack_Stand() external nonReentrant {
+    function Blackjack_Stand() external payable nonReentrant {
         address msgSender = _msgSender();
         BlackjackGame storage game = blackjackGames[msgSender];
 
@@ -188,9 +194,16 @@ contract Blackjack is Common {
 
         game.playerStand = true;
 
-        // use request instead for VRF?
-        //_requestRandomWords(1);
-        _resolveDealerPlay(msgSender);
+        // Resolve dealer draw using VRF so the outcome can't be computed and reverted
+        // within the same transaction.
+        uint256 VRFFee = _payVRFFee(600000, 28);
+        uint256 id = _requestRandomWords(9); // dealer can draw up to 9 more cards (10 max, 1 already dealt)
+
+        game.requestID = id;
+        game.blockNumber = uint64(ChainSpecificUtil.getBlockNumber());
+        blackjackIDs[id] = msgSender;
+
+        emit Blackjack_Stand_Event(msgSender, id, VRFFee);
     }
 
     function Blackjack_Refund() external nonReentrant {
@@ -249,43 +262,55 @@ contract Blackjack is Common {
 
             // check for blackjack
             if (game.playerScore == 21) {
+                // Player can now call Stand to resolve dealer via VRF.
                 game.playerStand = true;
-                _resolveDealerPlay(player);
             }
         } else {
-            // hit: give player one more card
-            game.playerCards[game.playerCardCount] = _getCard(randomWords[0]);
-            game.playerCardCount++;
-            game.playerScore = _calculateScore(game.playerCards, game.playerCardCount);
+            if (game.playerStand) {
+                // stand: resolve dealer play using VRF randomness
+                _resolveDealerPlay(player, randomWords);
+            } else {
+                // hit: give player one more card
+                game.playerCards[game.playerCardCount] = _getCard(randomWords[0]);
+                game.playerCardCount++;
+                game.playerScore = _calculateScore(game.playerCards, game.playerCardCount);
 
-            if (game.playerScore > 21) {
-                game.playerBust = true;
-                _endGame(player, false, false);
+                if (game.playerScore > 21) {
+                    game.playerBust = true;
+                    _endGame(player, false, false);
+                }
             }
         }
     }
 
-    /**
-        //TODO: add VRF RNG to this
-        //FIX: currently uses a hardcoded seed based on block.timestamp
-        it should have a random number from VRF passed instead
-
-        #VAU-02: Predictable Dealer Card Generation In _resolveDealerPlay()
-        Use Chainlink VRF to generate random dealer cards instead of deterministic on-chain computation. 
-        Request additional random words during the initial deal or when the player stands to ensure all dealer cards are truly random.
-     */
-    function _resolveDealerPlay(address player) internal {
+    function _resolveDealerPlay(address player, uint256[] calldata randomWords) internal {
         BlackjackGame storage game = blackjackGames[player];
-        
+
         // dealer must hit on 16 and below, stand on 17 and above
-        // simulate dealer drawing cards deterministically based on current state
-        uint256 seed = uint256(keccak256(abi.encodePacked(block.timestamp, player, game.playerScore)));
-        
+        uint256 wordIndex = 0;
+
         while (game.dealerScore < 17 && game.dealerCardCount < 10) {
-            seed = uint256(keccak256(abi.encodePacked(seed, game.dealerCardCount)));
-            game.dealerCards[game.dealerCardCount] = _getCard(seed);
+            uint256 rv;
+            if (wordIndex < randomWords.length) {
+                rv = randomWords[wordIndex];
+            } else {
+                // Safety fallback: derive extra entropy from VRF output if more words are unexpectedly needed.
+                rv = uint256(
+                    keccak256(
+                        abi.encodePacked(
+                            randomWords[randomWords.length - 1],
+                            wordIndex,
+                            player,
+                            game.dealerCardCount
+                        )
+                    )
+                );
+            }
+
+            game.dealerCards[game.dealerCardCount] = _getCard(rv);
             game.dealerCardCount++;
             game.dealerScore = _calculateScore(game.dealerCards, game.dealerCardCount);
+            wordIndex++;
         }
 
         if (game.dealerScore > 21) {

@@ -289,6 +289,12 @@ contract VideoPoker is Common {
                 }
             }
 
+            // IMPORTANT: shrink the in-memory array length so `_pickCard` (which uses `deck.length`)
+            // cannot draw from the logically-removed tail region.
+            assembly {
+                mstore(deck, deckLength)
+            }
+
             for (uint8 i = 0; i < 5; i++) {
                 if (game.toReplace[i]) {
                     _pickCard(i, randomWords[i], player, deck);

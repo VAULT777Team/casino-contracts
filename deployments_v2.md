@@ -53,6 +53,16 @@ registry = GameRegistry(_registry);
 | LINK/ETH Feed | `0x5BBd5163c48c4bc9ec808Be651c2DBBe9B1E0e99` |
 | Forwarder | `0x3E0EB7D2bf1B7728EB60AAb7CD29Bb55884f2266` |
 
+
+#### Account Abstraction (AA)
+| Component | Address |
+| --- | --- |
+| IEntryPoint | `0x0000000071727De22E5E9d8BAf0edAc6f37da032`
+
+
+### debug: 
+casino account: 0x31dE08D2460484F5900C454fBEf7D5d7Caa34b32
+
 #### Game contracts
 
 | Game | Address |

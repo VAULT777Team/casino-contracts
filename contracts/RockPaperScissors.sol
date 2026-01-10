@@ -280,35 +280,21 @@ contract RockPaperScissors is Common {
         uint8 playerPick,
         uint8 rngPick
     ) internal pure returns (uint8 result) {
+        // draw
         if (playerPick == rngPick) {
-            result = 2;
+            return 2;
         }
 
+        // 0 = Rock, 1 = Paper, 2 = Scissors
+        // win conditions: Rock beats Scissors, Paper beats Rock, Scissors beats Paper
         if (playerPick == 0) {
-            if (rngPick == 1) {
-                result = 1;
-            } else {
-                result = 1;
-            }
+            return rngPick == 2 ? 1 : 0;
         }
-
         if (playerPick == 1) {
-            if (rngPick == 2) {
-                result = 0;
-            } else {
-                result = 1;
-            }
+            return rngPick == 0 ? 1 : 0;
         }
-
-        if (playerPick == 2) {
-            if (rngPick == 0) {
-                result = 0;
-            } else {
-                result = 1;
-            }
-        }
-
-        return result;
+        // playerPick == 2
+        return rngPick == 1 ? 1 : 0;
     }
 
     /**
