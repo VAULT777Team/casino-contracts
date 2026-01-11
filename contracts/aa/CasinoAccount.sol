@@ -9,6 +9,9 @@ import {IAccount} from "./interfaces/IAccount.sol";
 import {IEntryPoint} from "./interfaces/IEntryPoint.sol";
 import {PackedUserOperation} from "./interfaces/PackedUserOperation.sol";
 
+import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
+import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
+
 /**
  * @title CasinoAccount
  * @notice Minimal ERC-4337 smart account for calling casino game contracts.
@@ -18,7 +21,7 @@ import {PackedUserOperation} from "./interfaces/PackedUserOperation.sol";
  * - User signs ONE PackedUserOperation (owner signature) to set a session key + approve USDC to paymaster.
  * - Backend holds the session key and signs subsequent PackedUserOperations, calling `execute` into game contracts.
  */
-contract CasinoAccount is IAccount, Ownable {
+contract CasinoAccount is IAccount, Ownable, IERC721Receiver, IERC1155Receiver {
     using ECDSA for bytes32;
 
     /// @dev Signature types for `PackedUserOperation.signature`.
@@ -169,5 +172,40 @@ contract CasinoAccount is IAccount, Ownable {
             sel := calldataload(callData.offset)
         }
         return sel == this.execute.selector || sel == this.executeBatch.selector;
+    }
+
+    function onERC1155BatchReceived(
+        address,
+        address,
+        uint256[] calldata,
+        uint256[] calldata,
+        bytes calldata
+    ) external pure override returns (bytes4) {
+        return this.onERC1155BatchReceived.selector;
+    }
+
+    function onERC1155Received(
+        address,
+        address,
+        uint256,
+        uint256,
+        bytes calldata
+    ) external pure override returns (bytes4) {
+        return this.onERC1155Received.selector;
+    }
+
+    function onERC721Received(
+        address,
+        address,
+        uint256,
+        bytes calldata
+    ) external pure override returns (bytes4) {
+        return this.onERC721Received.selector;
+    }
+
+    function supportsInterface(bytes4 interfaceId) external view returns (bool) {
+        return
+            interfaceId == type(IERC1155Receiver).interfaceId ||
+            interfaceId == type(IERC721Receiver).interfaceId;
     }
 }
