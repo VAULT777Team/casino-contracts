@@ -7,7 +7,7 @@ import {
     IERC20, SafeERC20,
     VRFConsumerBaseV2Plus, IVRFCoordinatorV2Plus,
     IDecimalAggregator
-} from "./Common.sol";
+} from "../Common.sol";
 
 /**
  * @title video poker game, players get dealt a 5 card hand and can replace any number of cards to form winning combinations
@@ -19,14 +19,12 @@ contract VideoPoker is Common {
     constructor(
         address _registry,
         address _vrf,
-        address link_eth_feed,
-        address _forwarder
+        address link_eth_feed
     ) VRFConsumerBaseV2Plus(_vrf) {
         b_registry      = IBankrollRegistry(_registry);
         ChainLinkVRF    = _vrf;
         s_Coordinator   = IVRFCoordinatorV2Plus(_vrf);
         LINK_ETH_FEED   = IDecimalAggregator(link_eth_feed);
-        _trustedForwarder = _forwarder;
 
         for (uint8 s = 0; s < 4; s++) {
             for (uint8 n = 1; n < 14; n++) {
@@ -355,7 +353,7 @@ contract VideoPoker is Common {
                 sortedCards[1].number == sortedCards[0].number ||
                 sortedCards[3].number == sortedCards[4].number
             ) {
-                return (30, 7);
+                return (15, 7);
             }
         }
         //check full house -> 3 of a kind + pair
@@ -367,7 +365,7 @@ contract VideoPoker is Common {
                 sortedCards[1].number == sortedCards[2].number ||
                 sortedCards[3].number == sortedCards[2].number
             ) {
-                return (8, 6);
+                return (5, 6);
             }
         }
         //check royal flush + straight flush + flush
@@ -377,15 +375,17 @@ contract VideoPoker is Common {
             sortedCards[0].suit == sortedCards[4].suit &&
             sortedCards[2].suit == sortedCards[1].suit
         ) {
+            // check royal flush
             if (sortedCards[0].number == 1 && sortedCards[4].number == 13) {
                 if (
                     sortedCards[2].number == sortedCards[3].number - 1 &&
                     sortedCards[3].number == sortedCards[4].number - 1 &&
                     sortedCards[1].number == sortedCards[2].number - 1
                 ) {
-                    return (100, 9);
+                    return (50, 9);
                 }
             }
+            // check straight flush
             if (sortedCards[0].number == 1 && sortedCards[1].number == 2) {
                 if (
                     sortedCards[0].number == sortedCards[1].number - 1 &&
@@ -393,16 +393,17 @@ contract VideoPoker is Common {
                     sortedCards[3].number == sortedCards[4].number - 1 &&
                     sortedCards[1].number == sortedCards[2].number - 1
                 ) {
-                    return (50, 8);
+                    return (25, 8);
                 }
             }
+            // check straight flush normal
             if (
                 sortedCards[0].number == sortedCards[1].number - 1 &&
                 sortedCards[2].number == sortedCards[3].number - 1 &&
                 sortedCards[3].number == sortedCards[4].number - 1 &&
                 sortedCards[1].number == sortedCards[2].number - 1
             ) {
-                return (50, 8);
+                return (25, 8);
             }
             return (6, 5);
         }
@@ -460,13 +461,13 @@ contract VideoPoker is Common {
                 sortedCards[2].number == sortedCards[3].number ||
                 sortedCards[3].number == sortedCards[4].number
             ) {
-                return (2, 2);
+                return (1, 2);
             }
         }
 
         if (sortedCards[1].number == sortedCards[2].number) {
             if (sortedCards[3].number == sortedCards[4].number) {
-                return (2, 2);
+                return (1, 2);
             }
         }
         //check one pair jacks or higher

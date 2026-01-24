@@ -20,14 +20,12 @@ contract EuropeanRoulette is Common {
     constructor(
         address _registry,
         address _vrf,
-        address link_eth_feed,
-        address _forwarder
+        address link_eth_feed
     ) VRFConsumerBaseV2Plus(_vrf) {
         b_registry      = IBankrollRegistry(_registry);
         ChainLinkVRF    = _vrf;
         s_Coordinator   = IVRFCoordinatorV2Plus(_vrf);
         LINK_ETH_FEED   = IDecimalAggregator(link_eth_feed);
-        _trustedForwarder = _forwarder;
     }
 
     // -----------------------------

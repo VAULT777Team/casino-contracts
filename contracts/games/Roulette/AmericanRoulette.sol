@@ -20,14 +20,12 @@ contract AmericanRoulette is Common {
     constructor(
         address _registry,
         address _vrf,
-        address link_eth_feed,
-        address _forwarder
+        address link_eth_feed
     ) VRFConsumerBaseV2Plus(_vrf) {
         b_registry      = IBankrollRegistry(_registry);
         ChainLinkVRF    = _vrf;
         s_Coordinator   = IVRFCoordinatorV2Plus(_vrf);
         LINK_ETH_FEED   = IDecimalAggregator(link_eth_feed);
-        _trustedForwarder = _forwarder;
     }
 
     // -----------------------------
@@ -45,8 +43,14 @@ contract AmericanRoulette is Common {
         COLUMN         // betValue = 1,2,3 (pays 2:1)
     }
 
-    struct RouletteGame {
+    struct BetWager {
+        BetType betType;
+        uint32 betValue; // depends on type
         uint256 wager;
+    }
+
+    struct RouletteGame {
+        uint256 totalWager;
         uint256 stopGain;
         uint256 stopLoss;
         uint256 requestID;
@@ -54,11 +58,12 @@ contract AmericanRoulette is Common {
         uint64 blockNumber;
         uint32 numBets;
 
-        BetType betType;
-        uint32 betValue; // depends on type
+        BetType[] betTypes;
+        uint32[] betValues;
+        uint256[] wagers;
     }
 
-    mapping(address => RouletteGame) public rouletteGames;
+    mapping(address => RouletteGame) private rouletteGames;
     mapping(uint256 => address) public rouletteIDs;
 
     // -----------------------------
@@ -66,10 +71,11 @@ contract AmericanRoulette is Common {
     // -----------------------------
     event Roulette_Play_Event(
         address indexed playerAddress,
-        uint256 wager,
+        uint256 totalWager,
         address tokenAddress,
-        BetType betType,
-        uint32 betValue,
+        BetType[] betTypes,
+        uint32[] betValues,
+        uint256[] wagers,
         uint32 numBets,
         uint256 stopGain,
         uint256 stopLoss,
@@ -78,10 +84,11 @@ contract AmericanRoulette is Common {
 
     event Roulette_Outcome_Event(
         address indexed playerAddress,
-        uint256 wager,
+        uint256 totalWager,
         uint256 payout,
         address tokenAddress,
         uint8[] results,
+        uint256[] wagers,
         uint256[] payouts,
         uint32 numGames
     );
@@ -98,6 +105,7 @@ contract AmericanRoulette is Common {
     error WagerAboveLimit(uint256 wager, uint256 maxWager);
     error AwaitingVRF(uint256 requestID);
     error InvalidNumBets(uint256 maxNumBets);
+    error InvalidBetValue(BetType betType, uint32 betValue);
     error NotAwaitingVRF();
     error BlockNumberTooLow(uint256 have, uint256 want);
 
@@ -114,11 +122,8 @@ contract AmericanRoulette is Common {
     // PLAY FUNCTION
     // -----------------------------
     function Roulette_Play(
-        uint256 wager,
+        BetWager[] calldata selectedWagers,
         address tokenAddress,
-        BetType betType,
-        uint32 betValue,
-        uint32 numBets,
         uint256 stopGain,
         uint256 stopLoss
     ) external payable nonReentrant {
@@ -127,14 +132,40 @@ contract AmericanRoulette is Common {
         if (rouletteGames[msgSender].requestID != 0)
             revert AwaitingVRF(rouletteGames[msgSender].requestID);
 
-        if (!(numBets > 0 && numBets <= 200))
-            revert InvalidNumBets(200);
+        uint32 numBets = uint32(selectedWagers.length);
+        if (!(numBets > 0 && numBets <= 200)) revert InvalidNumBets(200);
 
-        _kellyWager(wager, numBets, tokenAddress);
+        BetType[] memory betTypes = new BetType[](numBets);
+        uint32[] memory betValues = new uint32[](numBets);
+        uint256[] memory wagers = new uint256[](numBets);
+
+        uint256 totalWager;
+        uint256 maxMultiplier;
+        for (uint32 i = 0; i < selectedWagers.length; i++) {
+            BetWager calldata w = selectedWagers[i];
+
+            if (w.wager == 0) revert ZeroWager();
+            if (w.betType == BetType.STRAIGHT) {
+                if (w.betValue > 37) revert InvalidBetValue(w.betType, w.betValue);
+            } else if (w.betType == BetType.DOZEN || w.betType == BetType.COLUMN) {
+                if (w.betValue < 1 || w.betValue > 3) revert InvalidBetValue(w.betType, w.betValue);
+            }
+
+            uint256 m = _maxMultiplierForBetType(w.betType);
+            if (m > maxMultiplier) maxMultiplier = m;
+
+            betTypes[i] = w.betType;
+            betValues[i] = w.betValue;
+            wagers[i] = w.wager;
+
+            totalWager += w.wager;
+        }
+        
+        _kellyWager(totalWager, maxMultiplier, tokenAddress);
 
         uint256 fee = _transferWager(
             tokenAddress,
-            wager * numBets,
+            totalWager,
             900000,
             22,
             msgSender
@@ -142,31 +173,45 @@ contract AmericanRoulette is Common {
 
         uint256 requestID = _requestRandomWords(numBets);
 
-        rouletteGames[msgSender] = RouletteGame({
-            requestID: requestID,
-            wager: wager,
-            stopGain: stopGain,
-            stopLoss: stopLoss,
-            tokenAddress: tokenAddress,
-            blockNumber: uint64(ChainSpecificUtil.getBlockNumber()),
-            numBets: numBets,
-            betType: betType,
-            betValue: betValue
-        });
+        RouletteGame storage game = rouletteGames[msgSender];
+        game.requestID = requestID;
+        game.totalWager = totalWager;
+        game.stopGain = stopGain;
+        game.stopLoss = stopLoss;
+        game.tokenAddress = tokenAddress;
+        game.blockNumber = uint64(ChainSpecificUtil.getBlockNumber());
+        game.numBets = numBets;
+
+        // Copy bet parameters into storage for settlement.
+        for (uint32 i = 0; i < numBets; i++) {
+            game.betTypes.push(betTypes[i]);
+            game.betValues.push(betValues[i]);
+            game.wagers.push(wagers[i]);
+        }
 
         rouletteIDs[requestID] = msgSender;
 
         emit Roulette_Play_Event(
             msgSender,
-            wager,
+            totalWager,
             tokenAddress,
-            betType,
-            betValue,
+            betTypes,
+            betValues,
+            wagers,
             numBets,
             stopGain,
             stopLoss,
             fee
         );
+    }
+
+    function _maxMultiplierForBetType(
+        BetType betType
+    ) internal pure returns (uint256 multiplier) {
+        // multiplier is scaled by 10_000 to match _payoutFor.
+        if (betType == BetType.STRAIGHT) return 360000; // 36.00x
+        if (betType == BetType.DOZEN || betType == BetType.COLUMN) return 30000; // 3.00x
+        return 20000; // 2.00x (even-money bets)
     }
 
     // -----------------------------
@@ -184,7 +229,7 @@ contract AmericanRoulette is Common {
                 game.blockNumber + 200
             );
 
-        uint256 wagerAmount = game.wager * game.numBets;
+        uint256 wagerAmount = game.totalWager;
         address tokenAddress = game.tokenAddress;
 
         delete rouletteIDs[game.requestID];
@@ -286,6 +331,7 @@ contract AmericanRoulette is Common {
         uint256 payout;
 
         uint8[] memory results = new uint8[](game.numBets);
+        uint256[] memory wagers = new uint256[](game.numBets);
         uint256[] memory payouts = new uint256[](game.numBets);
 
         address tokenAddress = game.tokenAddress;
@@ -295,34 +341,42 @@ contract AmericanRoulette is Common {
             if (totalValue >= int256(game.stopGain)) break;
             if (totalValue <= -int256(game.stopLoss)) break;
 
+            uint256 wager = game.wagers[i];
+            wagers[i] = wager;
+
             uint8 result = uint8(randomWords[i] % 38); // 0–36, 37 = "00"
             results[i] = result;
 
-            uint256 m = _payoutFor(game.betType, game.betValue, result);
+            uint256 m = _payoutFor(game.betTypes[i], game.betValues[i], result);
 
             if (m > 0) {
-                uint256 win = (game.wager * m) / 10000;
+                uint256 win = (wager * m) / 10000;
                 payouts[i] = win;
                 payout += win;
-                totalValue += int256(win) - int256(game.wager);
+                totalValue += int256(win) - int256(wager);
             } else {
-                totalValue -= int256(game.wager);
+                totalValue -= int256(wager);
             }
         }
 
-        payout += (game.numBets - i) * game.wager; // refund remaining unplayed
+        // refund remaining unplayed
+        for (uint32 j = i; j < game.numBets; j++) {
+            payout += game.wagers[j];
+            wagers[j] = game.wagers[j];
+        }
 
         emit Roulette_Outcome_Event(
             playerAddress,
-            game.wager,
+            game.totalWager,
             payout,
             tokenAddress,
             results,
+            wagers,
             payouts,
             i
         );
 
-        _transferToBankroll(tokenAddress, game.wager * game.numBets);
+        _transferToBankroll(tokenAddress, game.totalWager);
 
         delete rouletteIDs[requestId];
         delete rouletteGames[playerAddress];
@@ -337,17 +391,23 @@ contract AmericanRoulette is Common {
     // -----------------------------
     function _kellyWager(
         uint256 wager,
-        uint256 numBets,
+        uint256 maxMultiplier,
         address tokenAddress
     ) internal view {
         uint256 balance = tokenAddress == address(0)
             ? address(Bankroll()).balance
             : IERC20(tokenAddress).balanceOf(address(Bankroll()));
 
-        uint256 maxWager = (balance * 1122448) / 100000000;
-        uint256 exposure = wager * numBets;
+        // Keep max potential payout bounded.
+        // Historical constant: 1.122448% of bankroll.
+        // We now apply it to the *worst-case payout* (wager * maxMultiplier), not raw wager.
+        uint256 maxPayout = (balance * 1122448) / 100000000;
 
-        if (wager > maxWager || exposure > maxWager)
+        // maxMultiplier is in basis-points-of-x (i.e., 2.00x = 20_000), so divide by 10_000.
+        uint256 maxPayoutForWager = (wager * maxMultiplier) / 10000;
+        if (maxPayoutForWager > maxPayout) {
+            uint256 maxWager = (maxPayout * 10000) / maxMultiplier;
             revert WagerAboveLimit(wager, maxWager);
+        }
     }
 }
