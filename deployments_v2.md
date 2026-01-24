@@ -43,6 +43,9 @@ registry = GameRegistry(_registry);
 
 ### Games
 
+sepolia VP:
+0x2A4E80c5C8A5ECC2486f19a1E8Ad920c1509ce7F
+
 #### Core infrastructure
 
 | Component | Address |
