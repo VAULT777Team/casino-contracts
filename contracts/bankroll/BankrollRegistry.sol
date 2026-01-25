@@ -39,7 +39,7 @@ contract BankrollRegistry {
     mapping(address => bool) public isKnownBankroll;
     
     // Protocol governance
-    address public immutable governance;
+    address public governance;
     address public pendingGovernance;
     
     // Events for TheGraph indexing
@@ -432,7 +432,6 @@ contract BankrollRegistry {
             block.timestamp
         );
         
-        // Note: governance is immutable, so this pattern ensures security
-        // In production, you might want to make governance mutable
-    }
+        governance = pendingGovernance;
+        pendingGovernance = address(0);
 }
