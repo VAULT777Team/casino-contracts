@@ -9,7 +9,13 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 /**
  * @title CrossChainBankForwarder
  * @notice Immutable forwarder that forwards cross chain messages and tokens to bankrolls
- * @dev This contract should NEVER be upgraded - it's the permanent historical record of cross-chain calls
+ * @dev 
+    NOT IN A STATE FOR PRODUCTION USE
+
+    The forwarder is designed to be used with Chainlink CCIP to send messages across chains.
+    It uses an immutable BankrollRegistry to resolve bankroll addresses on different chains.
+    It supports paying fees in either native currency or LINK tokens.
+    This contract should NEVER be upgraded - it's the permanent historical record of cross-chain calls
  */
 contract CrossChainBankForwarder {
     

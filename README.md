@@ -33,7 +33,7 @@ This repository contains the following casino games:
 - ✅ **Play-to-Earn** - 3% reward multiplier on all wagers
 - ✅ **Multi-Token** - Support for native ETH and whitelisted ERC20 tokens
 - ✅ **Batch Betting** - Multiple bets in single transaction with stop-gain/stop-loss
-- ✅ **Meta-Transactions** - Gasless transactions via trusted forwarder
+- ✅ **Meta-Transactions** - Gasless transactions via account abstraction with paymasters
 - ✅ **Self-Suspension** - Responsible gambling features built-in
 - ✅ **L2 Optimized** - Gas-efficient design for Arbitrum and other L2s
 
@@ -81,7 +81,6 @@ VERIFIER_API_KEY=your_etherscan_api_key
 BANKLP_ADDRESS=deployed_banklp_address
 VRF_ADDRESS=chainlink_vrf_coordinator
 LINK_ETH_FEED_ADDRESS=chainlink_link_eth_feed
-FORWARDER_ADDRESS=trusted_forwarder_address
 ```
 
 ## 🛠️ Development

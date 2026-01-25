@@ -2,15 +2,15 @@
 pragma solidity ^0.8.0;
 
 import {Script, console} from "forge-std/Script.sol";
-import {CoinFlip} from "../contracts/CoinFlip.sol";
-import {Dice} from "../contracts/Dice.sol";
-import {VideoPoker} from "../contracts/VideoPoker.sol";
-import {Blackjack} from "../contracts/Blackjack.sol";
-import {Plinko} from "../contracts/Plinko.sol";
-import {Keno} from "../contracts/Keno.sol";
-import {Slots} from "../contracts/Slots.sol";
-import {Mines} from "../contracts/Mines.sol";
-import {RockPaperScissors} from "../contracts/RockPaperScissors.sol";
+import {CoinFlip} from "../contracts/games/CoinFlip.sol";
+import {Dice} from "../contracts/games/Dice.sol";
+import {VideoPoker} from "../contracts/games/VideoPoker.sol";
+import {Blackjack} from "../contracts/games/Blackjack.sol";
+import {Plinko} from "../contracts/games/Plinko.sol";
+import {Keno} from "../contracts/games/Keno.sol";
+import {Slots} from "../contracts/games/Slots.sol";
+import {Mines} from "../contracts/games/Mines.sol";
+import {RockPaperScissors} from "../contracts/games/RockPaperScissors.sol";
 import {AmericanRoulette} from "../contracts/games/Roulette/AmericanRoulette.sol";
 import {EuropeanRoulette} from "../contracts/games/Roulette/EuropeanRoulette.sol";
 

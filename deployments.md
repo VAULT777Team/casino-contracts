@@ -485,7 +485,7 @@ CoinFlip    Dice    Plinko   VideoPoker   Roulette
 ### Current Version
 - All contracts use Solidity ^0.8.0
 - Chainlink VRF V2+ implementation
-- Meta-transaction support via Forwarder
+- Meta-transaction support via account abstraction
 - Play-to-earn rewards system active
 
 ---

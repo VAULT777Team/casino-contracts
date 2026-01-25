@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
-import "../contracts/VideoPoker.sol";
+import "../contracts/games/VideoPoker.sol";
 
 contract MockBankrollRegistry {
     address public bankroll;
@@ -46,7 +46,7 @@ contract MockBankroll {
 
 contract VideoPokerHarness is VideoPoker {
     constructor(address _registry)
-        VideoPoker(_registry, address(0xBEEF), address(0xFEED), address(0xF00D))
+        VideoPoker(_registry, address(0xBEEF), address(0xFEED))
     {}
 
     function setGameForTest(

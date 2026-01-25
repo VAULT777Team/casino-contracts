@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
-import "../contracts/VideoPoker.sol";
+import "../contracts/games/VideoPoker.sol";
 
 /**
  * @title VideoPoker Payout Logic Audit Tests
@@ -16,8 +16,7 @@ contract VideoPokerAuditTest is Test {
         poker = new VideoPoker(
             address(0x1), // registry
             address(0x2), // vrf
-            address(0x3), // link feed
-            address(0x4)  // forwarder
+            address(0x3)  // link feed
         );
     }
 

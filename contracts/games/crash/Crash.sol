@@ -46,8 +46,9 @@ contract Crash is Common {
     event BatchFinalized(uint256 batchId, bytes32 serverSeed);
 
     constructor(
-        address _registry
-    )  {
+        address _registry,
+        address _vrf
+    ) VRFConsumerBaseV2Plus(_vrf) {
         b_registry = IBankrollRegistry(_registry);
     }
 
@@ -155,5 +156,10 @@ contract Crash is Common {
         uint256 maxPayout = (available * 20) / 100; // 20% of available balance
         uint256 maxWager = (maxPayout * 10000) / maxMultiplier;
         return maxWager;
+    }
+
+    function fulfillRandomWords(uint256 requestId, uint256[] calldata randomWords) internal override {
+        // Not used in Crash game
+        revert("Not implemented");
     }
 }

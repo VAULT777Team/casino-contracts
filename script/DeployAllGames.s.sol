@@ -2,15 +2,15 @@
 pragma solidity ^0.8.0;
 
 import {console, Script} from "forge-std/Script.sol";
-import {CoinFlip} from "../contracts/CoinFlip.sol";
-import {Dice} from "../contracts/Dice.sol";
-import {VideoPoker} from "../contracts/VideoPoker.sol";
-import {Blackjack} from "../contracts/Blackjack.sol";
-import {Plinko} from "../contracts/Plinko.sol";
-import {Keno} from "../contracts/Keno.sol";
-import {Slots} from "../contracts/Slots.sol";
-import {Mines} from "../contracts/Mines.sol";
-import {RockPaperScissors} from "../contracts/RockPaperScissors.sol";
+import {CoinFlip} from "../contracts/games/CoinFlip.sol";
+import {Dice} from "../contracts/games/Dice.sol";
+import {VideoPoker} from "../contracts/games/VideoPoker.sol";
+import {Blackjack} from "../contracts/games/Blackjack.sol";
+import {Plinko} from "../contracts/games/Plinko.sol";
+import {Keno} from "../contracts/games/Keno.sol";
+import {Slots} from "../contracts/games/Slots.sol";
+import {Mines} from "../contracts/games/Mines.sol";
+import {RockPaperScissors} from "../contracts/games/RockPaperScissors.sol";
 import {AmericanRoulette} from "../contracts/games/Roulette/AmericanRoulette.sol";
 import {EuropeanRoulette} from "../contracts/games/Roulette/EuropeanRoulette.sol";
 
@@ -41,7 +41,6 @@ contract DeployAllGames is Script {
         BANKLP_REGISTRY = vm.envAddress("BANKLP_REGISTRY_ADDRESS");
         vrfCoordinator = vm.envAddress("VRF_ADDRESS");
         linkEthFeed = vm.envAddress("LINK_ETH_FEED_ADDRESS");
-        forwarder = vm.envAddress("FORWARDER_ADDRESS");
     }
 
     function run() public {
@@ -56,47 +55,47 @@ contract DeployAllGames is Script {
 
         // Deploy games without configs
         console.log("Deploying CoinFlip...");
-        coinFlip = address(new CoinFlip(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed, forwarder));
+        coinFlip = address(new CoinFlip(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed));
         console.log("CoinFlip deployed to:", coinFlip);
         console.log("");
 
         console.log("Deploying RockPaperScissors...");
-        rockPaperScissors = address(new RockPaperScissors(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed, forwarder));
+        rockPaperScissors = address(new RockPaperScissors(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed));
         console.log("RockPaperScissors deployed to:", rockPaperScissors);
         console.log("");
 
         console.log("Deploying Dice...");
-        dice = address(new Dice(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed, forwarder));
+        dice = address(new Dice(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed));
         console.log("Dice deployed to:", dice);
         console.log("");
 
         console.log("Deploying VideoPoker...");
-        videoPoker = address(new VideoPoker(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed, forwarder));
+        videoPoker = address(new VideoPoker(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed));
         console.log("VideoPoker deployed to:", videoPoker);
         console.log("");
 
         console.log("Deploying Blackjack...");
-        blackjack = address(new Blackjack(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed, forwarder));
+        blackjack = address(new Blackjack(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed));
         console.log("Blackjack deployed to:", blackjack);
         console.log("");
 
         console.log("Deploying Plinko...");
-        plinko = address(new Plinko(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed, forwarder));
+        plinko = address(new Plinko(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed));
         console.log("Plinko deployed to:", plinko);
         console.log("");
 
         console.log("Deploying Keno...");
-        keno = address(new Keno(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed, forwarder));
+        keno = address(new Keno(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed));
         console.log("Keno deployed to:", keno);
         console.log("");
 
         console.log("Deploying AmericanRoulette...");
-        americanRoulette = address(new AmericanRoulette(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed, forwarder));
+        americanRoulette = address(new AmericanRoulette(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed));
         console.log("AmericanRoulette deployed to:", americanRoulette);
         console.log("");
 
         console.log("Deploying EuropeanRoulette...");
-        europeanRoulette = address(new EuropeanRoulette(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed, forwarder));
+        europeanRoulette = address(new EuropeanRoulette(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed));
         console.log("EuropeanRoulette deployed to:", europeanRoulette);
         console.log("");
 
@@ -148,7 +147,6 @@ contract DeployAllGames is Script {
             BANKLP_REGISTRY,
             vrfCoordinator,
             linkEthFeed,
-            forwarder,
             slotsMultipliers,
             slotsOutcomes,
             343
@@ -165,7 +163,7 @@ contract DeployAllGames is Script {
         minesMaxReveal[16] = 3; minesMaxReveal[17] = 2; minesMaxReveal[18] = 2; minesMaxReveal[19] = 2;
         minesMaxReveal[20] = 2; minesMaxReveal[21] = 1; minesMaxReveal[22] = 1; minesMaxReveal[23] = 1;
         
-        mines = address(new Mines(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed, forwarder, minesMaxReveal));
+        mines = address(new Mines(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed, minesMaxReveal));
         console.log("Mines deployed to:", mines);
         console.log("");
 
