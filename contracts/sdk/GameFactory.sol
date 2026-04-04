@@ -18,12 +18,20 @@ contract GameFactory {
         registry = GameRegistry(_registry);
     }
 
+    modifier onlyRegistry() {
+        require(msg.sender == address(registry), "Not registry");
+        _;
+    }
+
     // Only allow configs that match a preset
     function create(
         Preset presetId,
         uint32 version,
         bytes memory gameBytecode
     ) external returns (address gameContract, uint256 nftId) {
+        //no access
+        revert();
+        
         GameConfigLib.GameConfig memory preset;
         if (presetId == Preset.ROULETTE) {
             preset = GameConfigLib.getRouletteConfig(version);

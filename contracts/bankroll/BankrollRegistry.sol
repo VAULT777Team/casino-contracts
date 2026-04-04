@@ -37,7 +37,7 @@ contract BankrollRegistry {
     // Mapping for quick lookups
     mapping(address => uint256) public bankrollToIndex;
     mapping(address => bool) public isKnownBankroll;
-    
+
     // Protocol governance
     address public governance;
     address public pendingGovernance;
@@ -101,7 +101,7 @@ contract BankrollRegistry {
         address indexed newGovernance,
         uint256 timestamp
     );
-    
+
     modifier onlyGovernance() {
         _onlyGovernance();
         _;
@@ -308,7 +308,7 @@ contract BankrollRegistry {
             block.timestamp
         );
     }
-    
+
     /**
      * @notice Deactivate a bankroll manually
      * @param index Index of the bankroll
@@ -408,7 +408,7 @@ contract BankrollRegistry {
             info.deactivatedAt
         );
     }
-    
+
     /**
      * @notice Two-step governance transfer
      */
@@ -434,4 +434,5 @@ contract BankrollRegistry {
         
         governance = pendingGovernance;
         pendingGovernance = address(0);
+    }
 }

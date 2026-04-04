@@ -20,6 +20,9 @@ contract GameRegistry {
     event GameRegistered(address indexed owner, address indexed gameContract, uint256 nftId, string configURI);
 
     function registerGame(address owner, address gameContract, uint256 nftId, string memory configURI) external {
+        // no access
+        revert();
+
         ( address currentBankroll,,, ) = bankrollRegistry.getCurrentBankroll();
         require(currentBankroll != address(0), "Bankroll not set");
         

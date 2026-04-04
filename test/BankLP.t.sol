@@ -17,6 +17,22 @@ contract MockERC20 is ERC20 {
     }
 }
 
+contract MockERC20Decimals is ERC20 {
+    uint8 private _decimals;
+
+    constructor(string memory name_, string memory symbol_, uint8 decimals_) ERC20(name_, symbol_) {
+        _decimals = decimals_;
+    }
+
+    function decimals() public view override returns (uint8) {
+        return _decimals;
+    }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+}
+
 /// @dev Minimal IToken-compatible reward token.
 contract MockRewardToken is ERC20 {
     constructor() ERC20("Play Reward", "PLAY") {}
@@ -26,6 +42,22 @@ contract MockRewardToken is ERC20 {
     }
 
     // Unused by BankLP.claimRewards, but present in BankLP's IToken interface.
+    function setGovernor(address, bool) external {}
+    function canMint(address) external pure returns (bool) { return true; }
+    function mintDaily() external {}
+}
+
+contract MockRewardToken6 is ERC20 {
+    constructor() ERC20("Play Reward 6", "PLAY6") {}
+
+    function decimals() public pure override returns (uint8) {
+        return 6;
+    }
+
+    function mint(uint256 amount) external {
+        _mint(msg.sender, amount);
+    }
+
     function setGovernor(address, bool) external {}
     function canMint(address) external pure returns (bool) { return true; }
     function mintDaily() external {}
@@ -64,6 +96,7 @@ contract BankLPTest is Test {
 
     MockERC20 public token;
     MockRewardToken public rewardToken;
+    MockRewardToken6 public rewardToken6;
     MockWETH public weth;
 
     address public owner;
@@ -84,6 +117,7 @@ contract BankLPTest is Test {
 
         token = new MockERC20("Mock Token", "MOCK");
         rewardToken = new MockRewardToken();
+        rewardToken6 = new MockRewardToken6();
         weth = new MockWETH();
 
         bankroll.setLiquidityPool(lp);
@@ -233,6 +267,34 @@ contract BankLPTest is Test {
 
         assertEq(bankroll.playRewards(player), 0);
         assertEq(rewardToken.balanceOf(player), reward);
+    }
+
+    function testCalculatePlayRewardNormalizesFrom6To18Decimals() public {
+        MockERC20Decimals usdc = new MockERC20Decimals("USD Coin", "USDC", 6);
+        bankroll.setPlayRewardToken(address(rewardToken)); // 18 decimals
+
+        // Default playReward = 300 and logic is reward = wager * playReward / 1000.
+        // Wager is 1000 USDC (6 decimals): 1000e6
+        // reward in wager units = 1000e6 * 300 / 1000 = 300e6
+        // normalize 6 -> 18 = 300e18
+        uint256 wager = 1000e6;
+        uint256 expectedReward = 300e18;
+
+        uint256 reward = bankroll.calculatePlayReward(address(usdc), wager);
+        assertEq(reward, expectedReward);
+    }
+
+    function testCalculatePlayRewardNormalizesFrom18To6Decimals() public {
+        bankroll.setPlayRewardToken(address(rewardToken6)); // 6 decimals
+
+        // Wager is 1 ether (18 decimals):
+        // reward in wager units = 1e18 * 300 / 1000 = 3e17
+        // normalize 18 -> 6 = 3e17 / 1e12 = 300_000
+        uint256 wager = 1 ether;
+        uint256 expectedReward = 300_000;
+
+        uint256 reward = bankroll.calculatePlayReward(address(0), wager);
+        assertEq(reward, expectedReward);
     }
 
     function testClaimRewardsRevertsIfBelowOrEqualThreshold() public {
