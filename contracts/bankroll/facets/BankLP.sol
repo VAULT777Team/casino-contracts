@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import {WithStorage} from "../libraries/LibStorage.sol";
 import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 import {Treasury } from '../../treasury/Treasury.sol';
 import {GameFactory} from "../../sdk/GameFactory.sol";
@@ -202,6 +203,10 @@ contract BankLP is WithStorage {
     function setRegistry(address _registry) external onlyOwner {
         registry = _registry;
     }
+    
+    function setGameFactory(address _factory) external onlyOwner {
+        factory = GameFactory(_factory);
+    }
 
     function setOwner(address _owner) external onlyOwner {
         owner = _owner;
@@ -288,6 +293,46 @@ contract BankLP is WithStorage {
     // playRewards
     function getPlayerReward() external view returns (uint256) {
         return playReward;
+    }
+
+    /// @notice Calculate the play2earn reward for a given wager.
+    /// @dev Computes the reward in the wager token's units, then normalizes the result
+    ///      to the decimals of `playRewardToken` (or 18 if not set).
+    ///      Uses the same multiplier semantics as existing game logic: `reward = wager * playReward / 1000`.
+    function calculatePlayReward(address wagerToken, uint256 wagerAmount) public view returns (uint256) {
+        if (playReward == 0 || wagerAmount == 0) return 0;
+
+        // Preserve existing semantics from Common.sol: playReward is per-mille (e.g. 300 = 30%).
+        uint256 rewardInWagerUnits = (wagerAmount * playReward) / 1000;
+
+        uint8 wagerDecimals = _decimalsOr18(wagerToken);
+        uint8 rewardDecimals = _decimalsOr18(playRewardToken);
+        return _scaleDecimals(rewardInWagerUnits, wagerDecimals, rewardDecimals);
+    }
+
+    /// @dev Convenience method for games to add rewards based on wager token + amount.
+    function addPlayerRewardFromWager(address player, address wagerToken, uint256 wagerAmount) external onlyGame {
+        uint256 reward = calculatePlayReward(wagerToken, wagerAmount);
+        if (reward == 0) return;
+        playRewards[player] += reward;
+        emit Bankroll_Player_Rewards_Earned(player, reward);
+    }
+
+    function _decimalsOr18(address token) internal view returns (uint8) {
+        if (token == address(0)) return 18;
+
+        // Attempt IERC20Metadata.decimals(); fallback to 18 on non-standard tokens.
+        (bool ok, bytes memory data) = token.staticcall(abi.encodeWithSelector(IERC20Metadata.decimals.selector));
+        if (!ok || data.length < 32) return 18;
+        return uint8(uint256(bytes32(data)));
+    }
+
+    function _scaleDecimals(uint256 amount, uint8 fromDecimals, uint8 toDecimals) internal pure returns (uint256) {
+        if (fromDecimals == toDecimals) return amount;
+        if (fromDecimals < toDecimals) {
+            return amount * (10 ** uint256(toDecimals - fromDecimals));
+        }
+        return amount / (10 ** uint256(fromDecimals - toDecimals));
     }
 
     function getPlayerRewards() external view returns (uint256) {

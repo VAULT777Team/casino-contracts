@@ -37,6 +37,7 @@ contract VaultLP2 is ReentrancyGuard, Ownable {
         uint256 rewardDebt; // Reward debt for accurate calculations
         uint256 pendingRewards; // Pending rewards to claim
         uint256 lastDepositTime; // For lock period enforcement
+        uint256 depositedAmountNormalized; // Principal deposited (normalized to 18 decimals)
     }
 
     // token => pool info
@@ -67,10 +68,11 @@ contract VaultLP2 is ReentrancyGuard, Ownable {
 
     error VaultInsolvent(address token);
 
-    constructor(address _lpToken, address _bankrollRegistry, address _feeRecipient) {
+    constructor(address _lpToken, address _bankrollRegistry) {
         lpToken = HouseLPToken(_lpToken);
         bankrollRegistry = IBankrollRegistry(_bankrollRegistry);
-        feeRecipient = _feeRecipient;
+        (, address treasuryAddress,, ) = bankrollRegistry.getCurrentBankroll();
+        feeRecipient = treasuryAddress;
         initialEpoch = block.timestamp;
     }
 
@@ -132,6 +134,55 @@ contract VaultLP2 is ReentrancyGuard, Ownable {
         performanceFee = fee;
     }
 
+    /**
+     * @notice Fund the bankroll without impacting existing stakers' PNL by minting shares to a recipient.
+     *         Use this for treasury/top-up funding instead of direct bankroll deposits.
+     */
+    function fundBankroll(address token, uint256 amount, address recipient) external payable onlyOwner nonReentrant {
+        require(isSupportedToken[token], "Token not supported");
+        require(amount > 0, "Amount must be > 0");
+        require(recipient != address(0), "Invalid recipient");
+
+        (address bankroll, , , uint256 activatedAt) = bankrollRegistry.getCurrentBankroll();
+        require(bankroll != address(0), "Bankroll not set");
+        require(activatedAt > 0, "Bankroll not active");
+
+        StakingPool storage pool = pools[token];
+        require(pool.isActive, "Pool not active");
+
+        UserInfo storage user = userInfo[token][recipient];
+
+        updatePool(token);
+
+        if (user.shares > 0) {
+            uint256 pending = (user.shares * pool.accRewardPerShare) / 1e18 - user.rewardDebt;
+            if (pending > 0) user.pendingRewards += pending;
+        }
+
+        uint256 shares = calculateShares(token, amount);
+
+        if (token == address(0)) {
+            require(msg.value == amount, "Incorrect ETH amount");
+            (bool success, ) = payable(bankroll).call{value: amount}("");
+            require(success, "ETH transfer failed");
+        } else {
+            IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+            IERC20(token).safeApprove(bankroll, 0);
+            IERC20(token).safeApprove(bankroll, amount);
+            bool funded = IBankLP(bankroll).fundBankroll(token, amount);
+            require(funded, "Funding bankroll failed");
+        }
+
+        user.shares += shares;
+        user.rewardDebt = (user.shares * pool.accRewardPerShare) / 1e18;
+        user.depositedAmountNormalized += _normalizeAmount(token, amount);
+
+        pool.totalShares += shares;
+
+        lpToken.mint(recipient, shares);
+        emit Deposited(recipient, token, amount, shares);
+    }
+
     // ========== PUBLIC FUNCTIONS ==========
 
     function deposit(address token, uint256 amount) external payable nonReentrant {
@@ -156,6 +207,15 @@ contract VaultLP2 is ReentrancyGuard, Ownable {
             if (pending > 0) user.pendingRewards += pending;
         }
 
+        uint256 totalAssetsNormalized = _totalAssetsNormalized(token);
+        if (pool.totalShares == 0 && totalAssetsNormalized > 0) {
+            pool.totalShares = totalAssetsNormalized;
+            UserInfo storage seedUser = userInfo[token][feeRecipient];
+            seedUser.shares += totalAssetsNormalized;
+            seedUser.rewardDebt = (seedUser.shares * pool.accRewardPerShare) / 1e18;
+            lpToken.mint(feeRecipient, totalAssetsNormalized);
+        }
+
         // Compute shares against current BankLP assets (pro-rata)
         uint256 shares = calculateShares(token, amount);
 
@@ -175,6 +235,7 @@ contract VaultLP2 is ReentrancyGuard, Ownable {
         user.shares += shares;
         user.rewardDebt = (user.shares * pool.accRewardPerShare) / 1e18;
         user.lastDepositTime = block.timestamp;
+        user.depositedAmountNormalized += _normalizeAmount(token, amount);
 
         pool.totalShares += shares;
 
@@ -214,8 +275,13 @@ contract VaultLP2 is ReentrancyGuard, Ownable {
         IBankLP bankroll = IBankLP(bankrollAddr);
         require(bankroll.getAvailableBalance(token) >= tokenAmount, "Bankroll has insufficient balance");
 
+        uint256 userSharesBefore = user.shares;
         user.shares -= shares;
         user.rewardDebt = (user.shares * pool.accRewardPerShare) / 1e18;
+        if (userSharesBefore > 0) {
+            uint256 principalReduction = (user.depositedAmountNormalized * shares) / userSharesBefore;
+            user.depositedAmountNormalized -= principalReduction;
+        }
 
         pool.totalShares -= shares;
 
@@ -375,13 +441,15 @@ contract VaultLP2 is ReentrancyGuard, Ownable {
         uint256 stakedAmount,
         uint256 shares,
         uint256 pending,
-        uint256 timeUntilNextWindow
+        uint256 timeUntilNextWindow,
+        int256 pnl
     ) {
         UserInfo memory userInf = userInfo[token][user];
         shares = userInf.shares;
         stakedAmount = calculateTokenAmount(token, shares);
         pending = this.pendingRewards(token, user);
         (timeUntilNextWindow, , , ) = getRemainingLockup();
+        pnl = int256(stakedAmount) - int256(userInf.depositedAmountNormalized);
     }
 
     function getAPY(address token) external view returns (uint256 apy) {

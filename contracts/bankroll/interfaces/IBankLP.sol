@@ -21,6 +21,12 @@ interface IBankLP {
         uint256 amount
     ) external;
 
+    /// @notice Calculate play2earn rewards for a wager, normalized to the playRewardToken decimals.
+    function calculatePlayReward(address wagerToken, uint256 wagerAmount) external view returns (uint256);
+
+    /// @notice Convenience method to add rewards derived from wager token + amount.
+    function addPlayerRewardFromWager(address player, address wagerToken, uint256 wagerAmount) external;
+
     function minRewardPayout()      external view returns (uint256);
     function getPlayerReward()      external view returns (uint256);
     function claimRewards()         external;
