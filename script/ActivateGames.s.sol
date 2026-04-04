@@ -28,6 +28,8 @@ contract ActivateGames is Script {
     address slots;
     address mines;
     address rockPaperScissors;
+    address fortuneWheel;
+    address lottery;
     address americanRoulette;
     address europeanRoulette;
 
@@ -45,6 +47,8 @@ contract ActivateGames is Script {
         keno = vm.envAddress("KENO_ADDRESS");
         slots = vm.envAddress("SLOTS_ADDRESS");
         mines = vm.envAddress("MINES_ADDRESS");
+        fortuneWheel = vm.envAddress("FORTUNE_WHEEL_ADDRESS");
+        lottery = vm.envAddress("LOTTERY_ADDRESS");
         rockPaperScissors = vm.envAddress("ROCK_PAPER_SCISSORS_ADDRESS");
         americanRoulette = vm.envAddress("AMERICAN_ROULETTE_ADDRESS");
         europeanRoulette = vm.envAddress("EUROPEAN_ROULETTE_ADDRESS");
@@ -81,31 +85,45 @@ contract ActivateGames is Script {
         ISubscriptionManager(VRF_ADDRESS).addConsumer(VRF_SUB_ID, plinko);
         console.log("Enabled Plinko:", plinko);
 
-        IBankLP(BANK_LP).setGame(keno, true);
-        ISubscriptionManager(VRF_ADDRESS).addConsumer(VRF_SUB_ID, keno);
-        console.log("Enabled Keno:", keno);
+        //IBankLP(BANK_LP).setGame(keno, true);
+        //ISubscriptionManager(VRF_ADDRESS).addConsumer(VRF_SUB_ID, keno);
+        //console.log("Enabled Keno:", keno);
 
         IBankLP(BANK_LP).setGame(slots, true);
         ISubscriptionManager(VRF_ADDRESS).addConsumer(VRF_SUB_ID, slots);
         console.log("Enabled Slots:", slots);
 
-        IBankLP(BANK_LP).setGame(mines, true);
-        ISubscriptionManager(VRF_ADDRESS).addConsumer(VRF_SUB_ID, mines);
-        console.log("Enabled Mines:", mines);
+        //IBankLP(BANK_LP).setGame(mines, true);
+        //ISubscriptionManager(VRF_ADDRESS).addConsumer(VRF_SUB_ID, mines);
+        //console.log("Enabled Mines:", mines);
 
         IBankLP(BANK_LP).setGame(rockPaperScissors, true);
         ISubscriptionManager(VRF_ADDRESS).addConsumer(VRF_SUB_ID, rockPaperScissors);
         console.log("Enabled RockPaperScissors:", rockPaperScissors);
+
+        IBankLP(BANK_LP).setGame(fortuneWheel, true);
+        ISubscriptionManager(VRF_ADDRESS).addConsumer(VRF_SUB_ID, fortuneWheel);
+        console.log("Enabled FortuneWheel:", fortuneWheel);
+
+        //IBankLP(BANK_LP).setGame(lottery, true);
+        //ISubscriptionManager(VRF_ADDRESS).addConsumer(VRF_SUB_ID, lottery);
+        //console.log("Enabled Lottery:", lottery);
 
         console.log("");
         console.log("========================================");
         console.log("Enabling Roulette Games");
         console.log("========================================");
         console.log("");
+
         IBankLP(BANK_LP).setGame(americanRoulette, true);
+        ISubscriptionManager(VRF_ADDRESS).addConsumer(VRF_SUB_ID, americanRoulette);
         console.log("Enabled AmericanRoulette:", americanRoulette);
-        IBankLP(BANK_LP).setGame(europeanRoulette, true);
-        console.log("Enabled EuropeanRoulette:", europeanRoulette);
+        
+        //IBankLP(BANK_LP).setGame(europeanRoulette, true);
+        //ISubscriptionManager(VRF_ADDRESS).addConsumer(VRF_SUB_ID, europeanRoulette);
+        //console.log("Enabled EuropeanRoulette:", europeanRoulette);
+        
+        
         vm.stopBroadcast();
         console.log("");
         console.log("========================================");
