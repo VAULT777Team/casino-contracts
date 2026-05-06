@@ -46,7 +46,7 @@ contract MockBankroll {
 
 contract VideoPokerHarness is VideoPoker {
     constructor(address _registry)
-        VideoPoker(_registry, address(0xBEEF), address(0xFEED))
+        VideoPoker(_registry)
     {}
 
     function setGameForTest(
@@ -74,7 +74,7 @@ contract VideoPokerHarness is VideoPoker {
     }
 
     function fulfillForTest(uint256 requestId, uint256[] calldata randomWords) external {
-        fulfillRandomWords(requestId, randomWords);
+        this.rawFulfillRandomWords(requestId, randomWords);
     }
 }
 

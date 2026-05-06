@@ -40,11 +40,20 @@ contract VaultLP2 is ReentrancyGuard, Ownable {
         uint256 depositedAmountNormalized; // Principal deposited (normalized to 18 decimals)
     }
 
+    struct ClaimRequest {
+        uint256 shares; // Shares requested for withdrawal
+        uint256 windowStart; // Earliest timestamp request can be executed
+        uint256 windowEnd; // Last timestamp request can be executed
+    }
+
     // token => pool info
     mapping(address => StakingPool) public pools;
 
     // token => user => user info
     mapping(address => mapping(address => UserInfo)) public userInfo;
+
+    // token => user => claim request
+    mapping(address => mapping(address => ClaimRequest)) public claimRequests;
 
     // Supported tokens
     address[] public supportedTokens;
@@ -56,7 +65,9 @@ contract VaultLP2 is ReentrancyGuard, Ownable {
     uint256 public claimRate = 14 days; // Time until withdrawal window opens
     uint256 public claimWindow = 2 days; // Duration of withdrawal window
     uint256 public performanceFee = 200; // 2% performance fee (basis points)
+    uint256 public missedClaimRequestFeeBps = 200; // 2% slash on missed claim request (basis points)
     address public feeRecipient;
+    address public operator;
 
     // Events
     event Deposited(address indexed user, address indexed token, uint256 amount, uint256 shares);
@@ -65,6 +76,10 @@ contract VaultLP2 is ReentrancyGuard, Ownable {
     event RewardsDistributed(address indexed token, uint256 amount);
     event PoolAdded(address indexed token);
     event PoolUpdated(address indexed token, uint256 rewardRate);
+    event ClaimRequested(address indexed user, address indexed token, uint256 shares, uint256 windowStart, uint256 windowEnd);
+    event ClaimRequestSlashed(address indexed user, address indexed token, uint256 requestShares, uint256 feeShares, uint256 feeAmount);
+    event OperatorUpdated(address indexed previousOperator, address indexed newOperator);
+    event MissedClaimRequestFeeUpdated(uint256 previousFeeBps, uint256 newFeeBps);
 
     error VaultInsolvent(address token);
 
@@ -73,7 +88,13 @@ contract VaultLP2 is ReentrancyGuard, Ownable {
         bankrollRegistry = IBankrollRegistry(_bankrollRegistry);
         (, address treasuryAddress,, ) = bankrollRegistry.getCurrentBankroll();
         feeRecipient = treasuryAddress;
+        operator = msg.sender;
         initialEpoch = block.timestamp;
+    }
+
+    modifier onlyOperatorOrOwner() {
+        require(msg.sender == owner() || msg.sender == operator, "Not operator");
+        _;
     }
 
     // ========== ADMIN FUNCTIONS ==========
@@ -132,6 +153,18 @@ contract VaultLP2 is ReentrancyGuard, Ownable {
     function setPerformanceFee(uint256 fee) external onlyOwner {
         require(fee <= 1000, "Fee too high"); // Max 10%
         performanceFee = fee;
+    }
+
+    function setOperator(address newOperator) external onlyOwner {
+        require(newOperator != address(0), "Invalid address");
+        emit OperatorUpdated(operator, newOperator);
+        operator = newOperator;
+    }
+
+    function setMissedClaimRequestFeeBps(uint256 newFeeBps) external onlyOperatorOrOwner {
+        require(newFeeBps <= 1000, "Fee too high"); // Max 10%
+        emit MissedClaimRequestFeeUpdated(missedClaimRequestFeeBps, newFeeBps);
+        missedClaimRequestFeeBps = newFeeBps;
     }
 
     /**
@@ -243,14 +276,43 @@ contract VaultLP2 is ReentrancyGuard, Ownable {
         emit Deposited(msg.sender, token, amount, shares);
     }
 
-    function withdraw(address token, uint256 shares) external nonReentrant {
+    function createClaimRequest(address token, uint256 shares) external nonReentrant {
         require(isSupportedToken[token], "Token not supported");
         require(shares > 0, "Shares must be > 0");
+        require(!isInWithdrawWindow(), "Cannot request during claim window");
+
+        _processMissedClaimRequest(token, msg.sender);
+
+        ClaimRequest storage request = claimRequests[token][msg.sender];
+        require(request.shares == 0, "Claim request exists");
 
         UserInfo storage user = userInfo[token][msg.sender];
         require(user.shares >= shares, "Insufficient shares");
 
-        require(isInWithdrawWindow(), "Not in valid withdrawal window");
+        (uint256 windowStart, uint256 windowEnd,) = getNextWithdrawWindow();
+
+        claimRequests[token][msg.sender] = ClaimRequest({shares: shares, windowStart: windowStart, windowEnd: windowEnd});
+
+        emit ClaimRequested(msg.sender, token, shares, windowStart, windowEnd);
+    }
+
+    function slashMissedClaimRequest(address token, address user) external nonReentrant {
+        bool slashed = _processMissedClaimRequest(token, user);
+        require(slashed, "No missed claim request");
+    }
+
+    function withdraw(address token, uint256 shares) external nonReentrant {
+        require(isSupportedToken[token], "Token not supported");
+        require(shares > 0, "Shares must be > 0");
+
+        _processMissedClaimRequest(token, msg.sender);
+
+        ClaimRequest storage request = claimRequests[token][msg.sender];
+        require(request.shares >= shares, "Invalid claim request");
+        require(block.timestamp >= request.windowStart && block.timestamp <= request.windowEnd, "Claim request not in window");
+
+        UserInfo storage user = userInfo[token][msg.sender];
+        require(user.shares >= shares, "Insufficient shares");
         require(block.timestamp >= user.lastDepositTime + claimRate, "Lock period not met");
 
         (address bankrollAddr, , , uint256 activatedAt) = bankrollRegistry.getCurrentBankroll();
@@ -261,12 +323,12 @@ contract VaultLP2 is ReentrancyGuard, Ownable {
         StakingPool storage pool = pools[token];
         updatePool(token);
 
-        // Accrue pending rewards
-        uint256 pending = (user.shares * pool.accRewardPerShare) / 1e18 - user.rewardDebt;
-        if (pending > 0) user.pendingRewards += pending;
-
-        // Claim rewards before withdrawing principal
-        _claimRewards(token);
+        // Claim rewards before withdrawing principal, but only when claimable.
+        // This avoids reverting withdrawals when no rewards are available.
+        uint256 totalRewards = user.pendingRewards + ((user.shares * pool.accRewardPerShare) / 1e18 - user.rewardDebt);
+        if (totalRewards > 0) {
+            _claimRewards(token);
+        }
 
         // Redeem pro-rata against current bankroll assets
         uint256 normalizedAmount = calculateTokenAmount(token, shares);
@@ -287,6 +349,11 @@ contract VaultLP2 is ReentrancyGuard, Ownable {
 
         bool transferred = bankroll.withdrawBankroll(msg.sender, token, tokenAmount);
         require(transferred, "Withdrawal from bankroll failed");
+
+        request.shares -= shares;
+        if (request.shares == 0) {
+            delete claimRequests[token][msg.sender];
+        }
 
         lpToken.burn(msg.sender, shares);
         emit Withdrawn(msg.sender, token, tokenAmount, shares);
@@ -545,6 +612,45 @@ contract VaultLP2 is ReentrancyGuard, Ownable {
         return (timeUntilNextWindow, currentEpochEnd, canWithdraw, currentEpoch);
     }
 
+    function getNextWithdrawWindow() public view returns (uint256 windowStart, uint256 windowEnd, uint256 windowEpoch) {
+        uint256 currentEpoch = epoch();
+        uint256 maxEpochsToCheck = (claimRate + claimWindow) / epochRate + 4;
+
+        uint256 earliestStart = type(uint256).max;
+        uint256 earliestEnd = 0;
+        uint256 earliestEpoch = 0;
+
+        for (uint256 i = 0; i < maxEpochsToCheck; i++) {
+            uint256 checkEpoch = currentEpoch + i;
+            uint256 epochTime = initialEpoch + (checkEpoch * epochRate);
+            uint256 start = epochTime + claimRate;
+            uint256 end = start + claimWindow;
+
+            if (start > block.timestamp && start < earliestStart) {
+                earliestStart = start;
+                earliestEnd = end;
+                earliestEpoch = checkEpoch;
+            }
+        }
+
+        require(earliestStart != type(uint256).max, "No upcoming window");
+        return (earliestStart, earliestEnd, earliestEpoch);
+    }
+
+    function getClaimRequest(address token, address user)
+        external
+        view
+        returns (uint256 shares, uint256 windowStart, uint256 windowEnd, bool isActive, bool isExpired, bool canExecute)
+    {
+        ClaimRequest memory request = claimRequests[token][user];
+        shares = request.shares;
+        windowStart = request.windowStart;
+        windowEnd = request.windowEnd;
+        isActive = shares > 0;
+        isExpired = isActive && block.timestamp > windowEnd;
+        canExecute = isActive && block.timestamp >= windowStart && block.timestamp <= windowEnd;
+    }
+
     // ========== INTERNAL HELPERS ==========
 
     function _totalAssetsNormalized(address token) internal view returns (uint256) {
@@ -576,6 +682,63 @@ contract VaultLP2 is ReentrancyGuard, Ownable {
         if (decimals == 18) return normalizedAmount;
         if (decimals < 18) return normalizedAmount / (10 ** (18 - decimals));
         return normalizedAmount * (10 ** (decimals - 18));
+    }
+
+    function _processMissedClaimRequest(address token, address userAddr) internal returns (bool) {
+        ClaimRequest storage request = claimRequests[token][userAddr];
+        if (request.shares == 0) return false;
+        if (block.timestamp <= request.windowEnd) return false;
+
+        UserInfo storage user = userInfo[token][userAddr];
+        StakingPool storage pool = pools[token];
+
+        updatePool(token);
+
+        if (user.shares > 0) {
+            uint256 pending = (user.shares * pool.accRewardPerShare) / 1e18 - user.rewardDebt;
+            if (pending > 0) {
+                user.pendingRewards += pending;
+            }
+        }
+
+        uint256 requestShares = request.shares;
+        uint256 feeShares = (requestShares * missedClaimRequestFeeBps) / 10000;
+        uint256 feeAmount = 0;
+
+        if (feeShares > 0) {
+            require(user.shares >= feeShares, "Insufficient shares for slash");
+
+            uint256 normalizedFeeAmount = calculateTokenAmount(token, feeShares);
+            feeAmount = _denormalizeAmount(token, normalizedFeeAmount);
+
+            (address bankrollAddr, , , uint256 activatedAt) = bankrollRegistry.getCurrentBankroll();
+            require(bankrollAddr != address(0), "Bankroll not set");
+            require(activatedAt > 0, "Bankroll not active");
+
+            IBankLP bankroll = IBankLP(bankrollAddr);
+            require(bankroll.getAvailableBalance(token) >= feeAmount, "Bankroll has insufficient balance");
+
+            bool feeTransferred = bankroll.withdrawBankroll(feeRecipient, token, feeAmount);
+            require(feeTransferred, "Slash fee transfer failed");
+
+            uint256 userSharesBefore = user.shares;
+            user.shares -= feeShares;
+            pool.totalShares -= feeShares;
+
+            if (userSharesBefore > 0) {
+                uint256 principalReduction = (user.depositedAmountNormalized * feeShares) / userSharesBefore;
+                user.depositedAmountNormalized -= principalReduction;
+            }
+
+            lpToken.burn(userAddr, feeShares);
+        }
+
+        user.rewardDebt = (user.shares * pool.accRewardPerShare) / 1e18;
+
+        delete claimRequests[token][userAddr];
+
+        emit ClaimRequestSlashed(userAddr, token, requestShares, feeShares, feeAmount);
+        return true;
     }
 
     // ========== RECEIVE ETH ==========

@@ -13,11 +13,7 @@ contract VideoPokerAuditTest is Test {
 
     function setUp() public {
         // Deploy with mock addresses (not needed for pure payout testing)
-        poker = new VideoPoker(
-            address(0x1), // registry
-            address(0x2), // vrf
-            address(0x3)  // link feed
-        );
+        poker = new VideoPoker(address(0x1));
     }
 
     // Helper to create cards

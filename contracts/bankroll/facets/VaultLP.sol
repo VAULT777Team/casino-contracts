@@ -267,16 +267,17 @@ contract VaultLP is ReentrancyGuard, Ownable {
 
         IBankLP bankroll = IBankLP(bankrollAddr);
         //require(bankroll.getIsValidWager(token), "Invalid token for rewards");
-        require(bankroll.getAvailableBalance(token) > tokenAmount, "Bankroll has insufficient balance");
+        require(bankroll.getAvailableBalance(token) >= tokenAmount, "Bankroll has insufficient balance");
         
         // Update pool
         StakingPool storage pool = pools[token];
         updatePool(token);
 
-        // Calculate pending rewards
-        uint256 pending = (user.shares * pool.accRewardPerShare / 1e18) - user.rewardDebt;
-        if (pending > 0) {
-            user.pendingRewards += pending;
+        // Claim rewards before withdrawing principal, but only when claimable.
+        // This avoids reverting withdrawals when no rewards are available.
+        uint256 totalRewards = user.pendingRewards + ((user.shares * pool.accRewardPerShare / 1e18) - user.rewardDebt);
+        if (totalRewards > 0) {
+            _claimRewards(token);
         }
 
         // Update user info
@@ -287,10 +288,6 @@ contract VaultLP is ReentrancyGuard, Ownable {
         // Update pool
         pool.totalStaked -= normalizedAmount;
         pool.totalShares -= shares;
-
-
-        // claim rewards before withdrawing
-        _claimRewards(token);
 
         // Withdraw from bankroll using withdraw function
         bool transferred = bankroll.withdrawBankroll(msg.sender, token, tokenAmount);
@@ -331,7 +328,7 @@ contract VaultLP is ReentrancyGuard, Ownable {
         uint256 totalRewards = user.pendingRewards + pending;
 
         require(totalRewards > 0, "No rewards to claim");
-        require(bankroll.getAvailableBalance(token) > totalRewards, "Bankroll has insufficient balance");
+        require(bankroll.getAvailableBalance(token) >= totalRewards, "Bankroll has insufficient balance");
 
         // Apply performance fee
         uint256 fee = (totalRewards * performanceFee) / 10000;

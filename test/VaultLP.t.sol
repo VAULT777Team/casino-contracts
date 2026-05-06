@@ -5,6 +5,31 @@ import "forge-std/Test.sol";
 import {VaultLP, HouseLPToken} from "../contracts/bankroll/facets/VaultLP.sol";
 import {ERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
+contract MockBankrollRegistry {
+    address public bankroll;
+    address public treasury;
+    string public version;
+    uint256 public activatedAt;
+
+    constructor(address _bankroll, address _treasury, string memory _version, uint256 _activatedAt) {
+        bankroll = _bankroll;
+        treasury = _treasury;
+        version = _version;
+        activatedAt = _activatedAt;
+    }
+
+    function setCurrentBankroll(address _bankroll, address _treasury, string calldata _version, uint256 _activatedAt) external {
+        bankroll = _bankroll;
+        treasury = _treasury;
+        version = _version;
+        activatedAt = _activatedAt;
+    }
+
+    function getCurrentBankroll() external view returns (address, address, string memory, uint256) {
+        return (bankroll, treasury, version, activatedAt);
+    }
+}
+
 /**
  * @title MockBankLP
  * @notice Mock bankroll for testing
@@ -12,13 +37,25 @@ import {ERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 contract MockBankLP {
     mapping(address => uint256) public balances;
 
-    function fundBankroll(address token, uint256 amount) external payable {
+    function fundBankroll(address token, uint256 amount) external returns (bool) {
         if (token == address(0)) {
-            balances[address(0)] += msg.value;
+            // ETH funding is handled through plain value transfer to receive().
+            return true;
         } else {
             IERC20(token).transferFrom(msg.sender, address(this), amount);
             balances[token] += amount;
+            return true;
         }
+    }
+
+    function withdrawBankroll(address to, address token, uint256 amount) external returns (bool) {
+        if (token == address(0)) {
+            (bool ok, ) = payable(to).call{value: amount}("");
+            return ok;
+        }
+
+        IERC20(token).transfer(to, amount);
+        return true;
     }
 
     function getAvailableBalance(address token) external view returns (uint256) {
@@ -71,6 +108,7 @@ contract VaultLPTest is Test {
     VaultLP public vault;
     HouseLPToken public lpToken;
     MockBankLP public bankroll;
+    MockBankrollRegistry public registry;
 
     MockERC20 public wbtc;
     MockERC20 public usdc;
@@ -102,8 +140,9 @@ contract VaultLPTest is Test {
 
         // Deploy contracts
         bankroll = new MockBankLP();
+        registry = new MockBankrollRegistry(address(bankroll), feeRecipient, "test", block.timestamp);
         lpToken = new HouseLPToken();
-        vault = new VaultLP(address(lpToken), address(bankroll), feeRecipient);
+        vault = new VaultLP(address(lpToken), address(registry), feeRecipient);
         
         // Set vault in LP token
         lpToken.setVault(address(vault));
@@ -245,6 +284,9 @@ contract VaultLPTest is Test {
 
     function testWithdrawDuringWithdrawalWindow() public {
         uint256 depositAmount = 10 ether;
+
+        // Disable time-based rewards for this pure withdrawal-path test.
+        vault.updateRewardRate(address(0), 0);
         
         // Alice deposits
         vm.startPrank(alice);
@@ -281,6 +323,9 @@ contract VaultLPTest is Test {
     function testWithdrawPartialShares() public {
         uint256 depositAmount = 100 ether;
         uint256 withdrawShares = 30 ether;
+
+        // Disable time-based rewards for this pure withdrawal-path test.
+        vault.updateRewardRate(address(0), 0);
         
         vm.startPrank(alice);
         vault.deposit{value: depositAmount}(address(0), depositAmount);
@@ -619,6 +664,9 @@ contract VaultLPTest is Test {
     function testFullUserJourney() public {
         uint256 depositAmount = 50 ether;
         uint256 rewardAmount = 25 ether;
+
+        // Keep this integration path deterministic by using only explicitly distributed rewards.
+        vault.updateRewardRate(address(0), 0);
         
         // 1. Alice deposits
         vm.startPrank(alice);
@@ -636,9 +684,6 @@ contract VaultLPTest is Test {
         uint256 pending = vault.pendingRewards(address(0), alice);
         assertGt(pending, 0);
         
-        // Fund the vault with enough ETH to cover all rewards (time-based + distributed)
-        vm.deal(address(vault), pending);
-        
         // 5. Alice claims rewards
         vm.prank(alice);
         vault.claimRewards(address(0));
@@ -646,6 +691,14 @@ contract VaultLPTest is Test {
         // 6. Alice waits for withdrawal window
         (uint256 timeUntilNextWindow,,,) = vault.getRemainingLockup();
         skip(timeUntilNextWindow);
+
+        // Ensure bankroll has enough liquidity for withdrawal + any newly claimable rewards.
+        uint256 expectedWithdrawAmount = vault.calculateTokenAmount(address(0), depositAmount);
+        uint256 pendingAtWithdraw = vault.pendingRewards(address(0), alice);
+        uint256 requiredLiquidity = expectedWithdrawAmount + pendingAtWithdraw;
+        if (address(bankroll).balance < requiredLiquidity) {
+            vm.deal(address(bankroll), requiredLiquidity);
+        }
         
         // 7. Alice withdraws during window
         vm.prank(alice);
@@ -775,6 +828,9 @@ contract VaultLPTest is Test {
         uint256 depositAmount = 100 ether;
         uint256 firstWithdraw = 30 ether;
         uint256 secondWithdraw = 70 ether;
+
+        // Disable time-based rewards for this pure withdrawal-path test.
+        vault.updateRewardRate(address(0), 0);
         
         vm.startPrank(alice);
         vault.deposit{value: depositAmount}(address(0), depositAmount);
@@ -817,6 +873,9 @@ contract VaultLPTest is Test {
     function testRemainingLockupDetailed() public {
         uint256 amount = 500 ether;
 
+        // Disable time-based rewards for this lock-window focused test.
+        vault.updateRewardRate(address(0), 0);
+
         // Simulate time pass with skip
         skip(1000000);  // Skip about 11.57 days
 
@@ -824,6 +883,9 @@ contract VaultLPTest is Test {
         
         // Deposit tokens
         vault.deposit{value: amount}(address(0), amount);
+
+        // Ensure lock period is satisfied before attempting withdrawal.
+        skip(CLAIM_RATE);
 
         // First check, time until next withdrawal window
         (

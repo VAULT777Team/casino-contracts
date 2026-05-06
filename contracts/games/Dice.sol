@@ -5,7 +5,6 @@ import {
     Common, IBankLP, IBankrollRegistry,
     ChainSpecificUtil,
     IERC20, SafeERC20,
-    VRFConsumerBaseV2Plus, IVRFCoordinatorV2Plus,
     IDecimalAggregator
 } from "../Common.sol";
 
@@ -17,14 +16,9 @@ contract Dice is Common {
     using SafeERC20 for IERC20;
 
     constructor(
-        address _registry,
-        address _vrf,
-        address link_eth_feed
-    ) VRFConsumerBaseV2Plus(_vrf) {
+        address _registry
+    ) {
         b_registry      = IBankrollRegistry(_registry);
-        ChainLinkVRF    = _vrf;
-        s_Coordinator   = IVRFCoordinatorV2Plus(_vrf);
-        LINK_ETH_FEED   = IDecimalAggregator(link_eth_feed);
     }
 
     struct DiceGame {
@@ -147,11 +141,10 @@ contract Dice is Common {
         }
 
         _kellyWager(wager, tokenAddress, multiplier);
-        uint256 fee = _transferWager(
+        _transferWager(
             tokenAddress,
             wager * numBets,
             700000,
-            21,
             msgSender
         );
 
@@ -180,7 +173,7 @@ contract Dice is Common {
             numBets,
             stopGain,
             stopLoss,
-            fee
+            0
         );
     }
 
@@ -214,7 +207,7 @@ contract Dice is Common {
         emit Dice_Refund_Event(msgSender, wager, tokenAddress);
     }
 
-    function fulfillRandomWords(
+    function _fulfillRandomWords(
         uint256 requestId,
         uint256[] calldata randomWords
     ) internal override {

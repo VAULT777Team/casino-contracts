@@ -11,7 +11,9 @@ pragma solidity ^0.8.0;
 interface IBankLP {
 
     function fundBankroll(address token, uint256 amount) external returns (bool);
+    function fundBankroll(address token, uint256 tokenId, uint256 amount) external returns (bool);
     function withdrawBankroll(address to, address token, uint256 amount) external returns (bool);
+    function withdrawBankroll(address to, address token, uint256 tokenId, uint256 amount) external returns (bool);
 
     function getOwner() external view returns (address);
     function execute(address to, uint256 value, bytes calldata data) external returns (bool, bytes memory);
@@ -38,13 +40,21 @@ interface IBankLP {
 
     function depositEther() external payable returns (bool);
     function deposit(address token, uint256 amount) external;
+    function deposit(address token, uint256 tokenId, uint256 amount) external;
     
     function setTokenAddress(address, bool) external;
+    function setTokenAddress(address, bool, bool) external;
     function setWrappedAddress(address)     external;
 
     function getIsValidWager(
         address game,
         address tokenAddress
+    ) external view returns (bool);
+
+    function getIsValidWager(
+        address game,
+        address tokenAddress,
+        uint256 tokenId
     ) external view returns (bool);
 
     function transferPayout(
@@ -53,21 +63,43 @@ interface IBankLP {
         address token
     ) external;
 
+    function transferPayout(
+        address player,
+        uint256 payout,
+        address token,
+        uint256 tokenId
+    ) external;
+
     function isPlayerSuspended(
         address player
     ) external view returns (bool, uint256);
 
     // reserves
     function getAvailableBalance(address token) external view returns (uint256);
+    function getAvailableBalance(address token, uint256 tokenId) external view returns (uint256);
     function reservedFunds(address token) external view returns (uint256);
+    function getReservedFunds(address token, uint256 tokenId) external view returns (uint256);
+    function isERC1155Token(address token) external view returns (bool);
 
     function reserveFunds(
         address token, 
         uint256 amount
     ) external;
 
+    function reserveFunds(
+        address token,
+        uint256 tokenId,
+        uint256 amount
+    ) external;
+
     function releaseFunds(
         address token,
+        uint256 amount
+    ) external;
+
+    function releaseFunds(
+        address token,
+        uint256 tokenId,
         uint256 amount
     ) external;
 

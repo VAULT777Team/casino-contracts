@@ -8,6 +8,7 @@ import {Treasury} from "../contracts/treasury/Treasury.sol";
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {ERC1155} from "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
 
 contract MockERC20 is ERC20 {
     constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {}
@@ -81,6 +82,14 @@ contract MockWETH is ERC20 {
     }
 }
 
+contract MockERC1155 is ERC1155 {
+    constructor() ERC1155("mock://{id}.json") {}
+
+    function mint(address to, uint256 id, uint256 amount) external {
+        _mint(to, id, amount, "");
+    }
+}
+
 // A contract that rejects any incoming ETH transfers.
 // Used to test vulnerability where BankLP tries to send ETH to a player
 // that cannot accept ETH
@@ -98,6 +107,7 @@ contract BankLPTest is Test {
     MockRewardToken public rewardToken;
     MockRewardToken6 public rewardToken6;
     MockWETH public weth;
+    MockERC1155 public multiToken;
 
     address public owner;
     address public lp;
@@ -119,6 +129,7 @@ contract BankLPTest is Test {
         rewardToken = new MockRewardToken();
         rewardToken6 = new MockRewardToken6();
         weth = new MockWETH();
+        multiToken = new MockERC1155();
 
         bankroll.setLiquidityPool(lp);
         bankroll.setWrappedAddress(address(weth));
@@ -209,6 +220,58 @@ contract BankLPTest is Test {
         assertEq(token.balanceOf(address(bankroll)), 0);
     }
 
+    function testERC1155ValidationUsesTokenAwareOverload() public {
+        bankroll.setTokenAddress(address(multiToken), true, true);
+
+        assertFalse(bankroll.getIsValidWager(game, address(multiToken)));
+        assertTrue(bankroll.getIsValidWager(game, address(multiToken), 7));
+    }
+
+    function testTransferPayoutERC1155() public {
+        uint256 payout = 123e18;
+        uint256 tokenId = 7;
+        bankroll.setTokenAddress(address(multiToken), true, true);
+        multiToken.mint(address(bankroll), tokenId, payout);
+
+        vm.prank(game);
+        bankroll.transferPayout(player, payout, address(multiToken), tokenId);
+
+        assertEq(multiToken.balanceOf(player, tokenId), payout);
+    }
+
+    function testReserveReleaseAndWithdrawRespectsReservedFundsERC1155() public {
+        uint256 total = 1000e18;
+        uint256 reserveAmt = 400e18;
+        uint256 tokenId = 11;
+        bankroll.setTokenAddress(address(multiToken), true, true);
+        multiToken.mint(address(bankroll), tokenId, total);
+
+        vm.prank(game);
+        bankroll.reserveFunds(address(multiToken), tokenId, reserveAmt);
+
+        assertEq(bankroll.getReservedFunds(address(multiToken), tokenId), reserveAmt);
+        assertEq(bankroll.getAvailableBalance(address(multiToken), tokenId), total - reserveAmt);
+
+        vm.prank(lp);
+        vm.expectRevert("Insufficient available token balance");
+        bankroll.withdrawBankroll(lp, address(multiToken), tokenId, total - reserveAmt + 1);
+
+        vm.prank(lp);
+        bankroll.withdrawBankroll(lp, address(multiToken), tokenId, total - reserveAmt);
+
+        assertEq(multiToken.balanceOf(lp, tokenId), total - reserveAmt);
+        assertEq(multiToken.balanceOf(address(bankroll), tokenId), reserveAmt);
+
+        vm.prank(game);
+        bankroll.releaseFunds(address(multiToken), tokenId, reserveAmt);
+
+        vm.prank(lp);
+        bankroll.withdrawBankroll(lp, address(multiToken), tokenId, reserveAmt);
+
+        assertEq(multiToken.balanceOf(lp, tokenId), total);
+        assertEq(multiToken.balanceOf(address(bankroll), tokenId), 0);
+    }
+
     function testDepositERC20CollectsFeesAndPaysTreasury() public {
         uint256 amount = 10_000e18; // divisible by 100 for clean fee math
         uint256 fee = (amount * 2) / 100; // 2%
@@ -224,6 +287,25 @@ contract BankLPTest is Test {
         assertEq(bankroll.fees(address(token)), fee);
         assertEq(token.balanceOf(address(treasury)), treasuryFee);
         assertEq(token.balanceOf(address(bankroll)), amount - treasuryFee);
+    }
+
+    function testDepositERC1155CollectsFeesAndPaysTreasury() public {
+        uint256 amount = 10_000e18;
+        uint256 fee = (amount * 2) / 100;
+        uint256 treasuryFee = fee / 2;
+        uint256 tokenId = 5;
+        bankroll.setTokenAddress(address(multiToken), true, true);
+
+        multiToken.mint(game, tokenId, amount);
+
+        vm.startPrank(game);
+        multiToken.setApprovalForAll(address(bankroll), true);
+        bankroll.deposit(address(multiToken), tokenId, amount);
+        vm.stopPrank();
+
+        assertEq(bankroll.getFees(address(multiToken), tokenId), fee);
+        assertEq(multiToken.balanceOf(address(treasury), tokenId), treasuryFee);
+        assertEq(multiToken.balanceOf(address(bankroll), tokenId), amount - treasuryFee);
     }
 
     function testDepositERC20WithCreatorShare() public {

@@ -60,57 +60,57 @@ contract DeployAllGames is Script {
 
         // Deploy games without configs
         console.log("Deploying CoinFlip...");
-        coinFlip = address(new CoinFlip(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed));
+        coinFlip = address(new CoinFlip(BANKLP_REGISTRY));
         console.log("CoinFlip deployed to:", coinFlip);
         console.log("");
 
         console.log("Deploying RockPaperScissors...");
-        rockPaperScissors = address(new RockPaperScissors(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed));
+        rockPaperScissors = address(new RockPaperScissors(BANKLP_REGISTRY));
         console.log("RockPaperScissors deployed to:", rockPaperScissors);
         console.log("");
 
         console.log("Deploying Dice...");
-        dice = address(new Dice(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed));
+        dice = address(new Dice(BANKLP_REGISTRY));
         console.log("Dice deployed to:", dice);
         console.log("");
 
         console.log("Deploying VideoPoker...");
-        videoPoker = address(new VideoPoker(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed));
+        videoPoker = address(new VideoPoker(BANKLP_REGISTRY));
         console.log("VideoPoker deployed to:", videoPoker);
         console.log("");
 
         console.log("Deploying Blackjack...");
-        blackjack = address(new Blackjack(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed));
+        blackjack = address(new Blackjack(BANKLP_REGISTRY));
         console.log("Blackjack deployed to:", blackjack);
         console.log("");
 
         console.log("Deploying Plinko...");
-        plinko = address(new Plinko(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed));
+        plinko = address(new Plinko(BANKLP_REGISTRY));
         console.log("Plinko deployed to:", plinko);
         console.log("");
 
         console.log("Deploying Keno...");
-        keno = address(new Keno(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed));
+        keno = address(new Keno(BANKLP_REGISTRY));
         console.log("Keno deployed to:", keno);
         console.log("");
 
         console.log("Deploying FortuneWheel...");
-        fortuneWheel = address(new FortuneWheel(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed));
+        fortuneWheel = address(new FortuneWheel(BANKLP_REGISTRY));
         console.log("FortuneWheel deployed to:", fortuneWheel);
         console.log("");
 
         console.log("Deploying Lottery...");
-        lottery = address(new Lottery(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed));
+        lottery = address(new Lottery(BANKLP_REGISTRY));
         console.log("Lottery deployed to:", lottery);
         console.log("");
 
         console.log("Deploying AmericanRoulette...");
-        americanRoulette = address(new AmericanRoulette(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed));
+        americanRoulette = address(new AmericanRoulette(BANKLP_REGISTRY));
         console.log("AmericanRoulette deployed to:", americanRoulette);
         console.log("");
 
         console.log("Deploying EuropeanRoulette...");
-        europeanRoulette = address(new EuropeanRoulette(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed));
+        europeanRoulette = address(new EuropeanRoulette(BANKLP_REGISTRY));
         console.log("EuropeanRoulette deployed to:", europeanRoulette);
         console.log("");
 
@@ -164,8 +164,6 @@ contract DeployAllGames is Script {
 
         slots = address(new Slots(
             BANKLP_REGISTRY,
-            vrfCoordinator,
-            linkEthFeed,
             slotsMultipliers,
             slotsOutcomes,
             343,
@@ -190,8 +188,6 @@ contract DeployAllGames is Script {
 
         Slots vaultBonanzaContract = new Slots(
             BANKLP_REGISTRY,
-            vrfCoordinator,
-            linkEthFeed,
             emptyU16,
             emptyU16,
             0,
@@ -243,7 +239,7 @@ contract DeployAllGames is Script {
         minesMaxReveal[16] = 3; minesMaxReveal[17] = 2; minesMaxReveal[18] = 2; minesMaxReveal[19] = 2;
         minesMaxReveal[20] = 2; minesMaxReveal[21] = 1; minesMaxReveal[22] = 1; minesMaxReveal[23] = 1;
         
-        mines = address(new Mines(BANKLP_REGISTRY, vrfCoordinator, linkEthFeed, minesMaxReveal));
+        mines = address(new Mines(BANKLP_REGISTRY, minesMaxReveal));
         console.log("Mines deployed to:", mines);
         console.log("");
 

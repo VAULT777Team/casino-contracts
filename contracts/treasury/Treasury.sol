@@ -1,12 +1,17 @@
+// SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.0;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
+import {ERC1155Holder} from "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Holder.sol";
 
-contract Treasury {
+contract Treasury is ERC1155Holder {
     address public owner;
 
     event TreasuryDeposit(address sender, address token, uint256 amount);
     event TreasuryWithdrawal(address sender, address recipient, address token, uint256 amount);
+    event TreasuryDepositERC1155(address sender, address token, uint256 tokenId, uint256 amount);
+    event TreasuryWithdrawalERC1155(address sender, address recipient, address token, uint256 tokenId, uint256 amount);
 
     constructor() {
         owner = msg.sender;
@@ -42,6 +47,30 @@ contract Treasury {
 
     }
 
+    function onERC1155Received(
+        address,
+        address from,
+        uint256 id,
+        uint256 value,
+        bytes memory
+    ) public virtual override returns (bytes4) {
+        emit TreasuryDepositERC1155(from, msg.sender, id, value);
+        return this.onERC1155Received.selector;
+    }
+
+    function onERC1155BatchReceived(
+        address,
+        address from,
+        uint256[] memory ids,
+        uint256[] memory values,
+        bytes memory
+    ) public virtual override returns (bytes4) {
+        for (uint256 i = 0; i < ids.length; i++) {
+            emit TreasuryDepositERC1155(from, msg.sender, ids[i], values[i]);
+        }
+        return this.onERC1155BatchReceived.selector;
+    }
+
     function withdraw(address recipient, address token, uint256 amount) external onlyOwner {
         uint256 balance = 0;
         if(token == address(0)){
@@ -58,6 +87,11 @@ contract Treasury {
         }
 
         emit TreasuryWithdrawal(msg.sender, recipient, token, amount);
+    }
+
+    function withdrawERC1155(address recipient, address token, uint256 tokenId, uint256 amount) external onlyOwner {
+        IERC1155(token).safeTransferFrom(address(this), recipient, tokenId, amount, "");
+        emit TreasuryWithdrawalERC1155(msg.sender, recipient, token, tokenId, amount);
     }
 
 

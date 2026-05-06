@@ -5,7 +5,6 @@ import {
     Common, IBankrollRegistry,
     ChainSpecificUtil,
     IERC20, SafeERC20,
-    VRFConsumerBaseV2Plus, IVRFCoordinatorV2Plus,
     IDecimalAggregator
 } from "../Common.sol";
 
@@ -17,14 +16,9 @@ contract Mines is Common {
 
     constructor(
         address _registry,
-        address _vrf,
-        address link_eth_feed,
         uint8[24] memory maxReveal
-    ) VRFConsumerBaseV2Plus(_vrf) {
+    ) {
         b_registry      = IBankrollRegistry(_registry);
-        ChainLinkVRF    = _vrf;
-        s_Coordinator   = IVRFCoordinatorV2Plus(_vrf);
-        LINK_ETH_FEED   = IDecimalAggregator(link_eth_feed);
 
         _setMaxReveal(maxReveal);
     }
@@ -229,11 +223,10 @@ contract Mines is Common {
         }
 
         _kellyWager(wager, tokenAddress, _minesMaxReveal, numMines);
-        uint256 fee = _transferWager(
+        _transferWager(
             tokenAddress,
             wager,
             400000,
-            22,
             msgSender
         );
         uint256 id = _requestRandomWords(numTilesToReveal);
@@ -252,7 +245,7 @@ contract Mines is Common {
             tokenAddress,
             numMines,
             isCashout,
-            fee
+            0
         );
     }
 
@@ -300,15 +293,13 @@ contract Mines is Common {
             );
         }
 
-        uint256 VRFFee = _payVRFFee(400000, 24);
-
         uint256 id = _requestRandomWords(numTilesToReveal);
         minesIDs[id] = msgSender;
         game.tilesPicked = tiles;
         game.isCashout = isCashout;
         game.requestID = id;
         game.blockNumber = uint64(ChainSpecificUtil.getBlockNumber());
-        emit Mines_Fee_Event(msgSender, VRFFee);
+        emit Mines_Fee_Event(msgSender, 0);
     }
 
     /**
@@ -401,7 +392,7 @@ contract Mines is Common {
         }
     }
 
-    function fulfillRandomWords(
+    function _fulfillRandomWords(
         uint256 requestId,
         uint256[] calldata randomWords
     ) internal override {

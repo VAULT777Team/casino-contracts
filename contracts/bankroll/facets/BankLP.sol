@@ -4,6 +4,8 @@ pragma solidity ^0.8.0;
 import {WithStorage} from "../libraries/LibStorage.sol";
 import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
+import {ERC1155Holder} from "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Holder.sol";
 
 import {Treasury } from '../../treasury/Treasury.sol';
 import {GameFactory} from "../../sdk/GameFactory.sol";
@@ -18,7 +20,7 @@ interface IToken is IERC20 {
 }
 
 
-contract BankLP is WithStorage {
+contract BankLP is WithStorage, ERC1155Holder {
     using SafeERC20 for IERC20;
 
     address public owner;
@@ -29,8 +31,10 @@ contract BankLP is WithStorage {
 
     mapping(address => uint256) public playRewards;
     mapping(address => uint256) public fees;
+    mapping(bytes32 => uint256) internal fees1155;
 
     mapping(address => uint256) public reservedFunds;
+    mapping(bytes32 => uint256) internal reservedFunds1155;
 
     // Game creator fee share (basis points, e.g. 500 = 5%)
     mapping(address => uint256) public creatorFeeBps;
@@ -59,6 +63,7 @@ contract BankLP is WithStorage {
      * @param isValid new state of token address
      */
     event Bankroll_Token_State_Changed(address tokenAddress, bool isValid);
+    event Bankroll_Token_Type_Changed(address tokenAddress, bool isERC1155);
 
     event Bankroll_Player_Suspended(address playerAddress, uint256 suspensionTime, bool isSuspended);
 
@@ -85,6 +90,7 @@ contract BankLP is WithStorage {
      * @param payout amount of payout transferred
      */
     event Bankroll_Payout_Transferred(address gameAddress, address playerAddress, uint256 payout);
+    event Bankroll_Payout_Transferred_ERC1155(address gameAddress, address playerAddress, address tokenAddress, uint256 tokenId, uint256 payout);
 
     /**
      * @dev event emitted when bankroll receives liquidity
@@ -92,6 +98,7 @@ contract BankLP is WithStorage {
      * @param amount amount of funding
      */
     event Bankroll_Received_Liquidity(address indexed tokenAddress, uint256 amount);
+    event Bankroll_Received_Liquidity_ERC1155(address indexed tokenAddress, uint256 indexed tokenId, uint256 amount);
     
     /**
      * @dev event emitted when a player deposit into the bankroll is made
@@ -99,6 +106,7 @@ contract BankLP is WithStorage {
      * @param amount amount of funding
      */
     event Bankroll_Received_Player_Deposit(address indexed tokenAddress, uint256 amount);
+    event Bankroll_Received_Player_Deposit_ERC1155(address indexed tokenAddress, uint256 indexed tokenId, uint256 amount);
     
     /**
      * @dev event emitted when fees are deposited into treasury
@@ -106,9 +114,11 @@ contract BankLP is WithStorage {
      * @param amount Fee deposited in to treasury
      */
     event Bankroll_Treasury_Deposit(address indexed tokenAddress, uint256 amount);
+    event Bankroll_Treasury_Deposit_ERC1155(address indexed tokenAddress, uint256 indexed tokenId, uint256 amount);
 
     error InvalidGameAddress();
     error TransferFailed();
+    error InvalidTokenStandard(address tokenAddress);
 
     modifier onlyOwner() {
         _onlyOwner();
@@ -240,6 +250,10 @@ contract BankLP is WithStorage {
      * @param token Token to get balance of
     */
     function getAvailableBalance(address token) public view returns (uint256) {
+        if (gs().isERC1155Token[token]) {
+            return 0;
+        }
+
         uint256 totalBalance;
         if(token == address(0)){
             totalBalance = address(this).balance;
@@ -251,15 +265,42 @@ contract BankLP is WithStorage {
         return totalBalance > reserved ? totalBalance - reserved : 0;
     }
 
+    function getAvailableBalance(address token, uint256 tokenId) public view returns (uint256) {
+        bytes32 key = _erc1155Key(token, tokenId);
+        uint256 totalBalance = IERC1155(token).balanceOf(address(this), tokenId);
+        uint256 reserved = reservedFunds1155[key];
+        return totalBalance > reserved ? totalBalance - reserved : 0;
+    }
+
+    function getReservedFunds(address token, uint256 tokenId) external view returns (uint256) {
+        return reservedFunds1155[_erc1155Key(token, tokenId)];
+    }
+
+    function getFees(address token, uint256 tokenId) external view returns (uint256) {
+        return fees1155[_erc1155Key(token, tokenId)];
+    }
+
+    function isERC1155Token(address token) external view returns (bool) {
+        return gs().isERC1155Token[token];
+    }
+
     /**
      * @dev Reserve funds for a game (called by game contracts)
      * @param token Token to reserve
      * @param amount Amount to reserve
     */
     function reserveFunds(address token, uint256 amount) external onlyGame {
+        if (gs().isERC1155Token[token]) revert InvalidTokenStandard(token);
         uint256 available = getAvailableBalance(token);
         require(available >= amount, "Insufficien available balance to reserve");
         reservedFunds[token] += amount;
+    }
+
+    function reserveFunds(address token, uint256 tokenId, uint256 amount) external onlyGame {
+        if (!gs().isERC1155Token[token]) revert InvalidTokenStandard(token);
+        uint256 available = getAvailableBalance(token, tokenId);
+        require(available >= amount, "Insufficien available balance to reserve");
+        reservedFunds1155[_erc1155Key(token, tokenId)] += amount;
     }
 
     /**
@@ -268,8 +309,16 @@ contract BankLP is WithStorage {
      * @param amount Amount to reserve
     */
     function releaseFunds(address token, uint256 amount) external onlyGame {
+        if (gs().isERC1155Token[token]) revert InvalidTokenStandard(token);
         require(reservedFunds[token] >= amount, "Insufficient reserved funds");
         reservedFunds[token] -= amount;
+    }
+
+    function releaseFunds(address token, uint256 tokenId, uint256 amount) external onlyGame {
+        if (!gs().isERC1155Token[token]) revert InvalidTokenStandard(token);
+        bytes32 key = _erc1155Key(token, tokenId);
+        require(reservedFunds1155[key] >= amount, "Insufficient reserved funds");
+        reservedFunds1155[key] -= amount;
     }
 
     /**
@@ -285,8 +334,23 @@ contract BankLP is WithStorage {
     ) external view returns (bool) {
         if(!gs().isGame[game]) return false;
         if(!gs().isTokenAllowed[tokenAddress]) return false;
+        if(gs().isERC1155Token[tokenAddress]) return false;
         
         uint256 available = getAvailableBalance(tokenAddress);
+        return available >= maxPayout;
+    }
+
+    function getIsValidWagerWithReserve(
+        address game,
+        address tokenAddress,
+        uint256 tokenId,
+        uint256 maxPayout
+    ) external view returns (bool) {
+        if(!gs().isGame[game]) return false;
+        if(!gs().isTokenAllowed[tokenAddress]) return false;
+        if(!gs().isERC1155Token[tokenAddress]) return false;
+
+        uint256 available = getAvailableBalance(tokenAddress, tokenId);
         return available >= maxPayout;
     }
 
@@ -389,6 +453,18 @@ contract BankLP is WithStorage {
     ) external view returns (bool) {
         if(!gs().isGame[game]) return false;
         if(!gs().isTokenAllowed[tokenAddress]) return false;
+        if(gs().isERC1155Token[tokenAddress]) return false;
+        return true;
+    }
+
+    function getIsValidWager(
+        address game,
+        address tokenAddress,
+        uint256
+    ) external view returns (bool) {
+        if(!gs().isGame[game]) return false;
+        if(!gs().isTokenAllowed[tokenAddress]) return false;
+        if(!gs().isERC1155Token[tokenAddress]) return false;
         return true;
     }
 
@@ -401,8 +477,26 @@ contract BankLP is WithStorage {
         address tokenAddress,
         bool isValid
     ) external onlyOwner {
+        _setTokenAddress(tokenAddress, isValid, false);
+    }
+
+    function setTokenAddress(
+        address tokenAddress,
+        bool isValid,
+        bool isERC1155_
+    ) external onlyOwner {
+        _setTokenAddress(tokenAddress, isValid, isERC1155_);
+    }
+
+    function _setTokenAddress(
+        address tokenAddress,
+        bool isValid,
+        bool isERC1155_
+    ) internal {
         gs().isTokenAllowed[tokenAddress] = isValid;
+        gs().isERC1155Token[tokenAddress] = isValid && isERC1155_;
         emit Bankroll_Token_State_Changed(tokenAddress, isValid);
+        emit Bankroll_Token_Type_Changed(tokenAddress, isValid && isERC1155_);
     }
 
     /**
@@ -427,6 +521,9 @@ contract BankLP is WithStorage {
         if (!gs().isGame[msg.sender]) {
             revert InvalidGameAddress();
         }
+        if (gs().isERC1155Token[tokenAddress]) {
+            revert InvalidTokenStandard(tokenAddress);
+        }
         if (tokenAddress != address(0)) {
             bool transferred = IERC20(tokenAddress).transfer(player, payout);
             require(transferred, "ERC20: Transfer failed");
@@ -449,6 +546,23 @@ contract BankLP is WithStorage {
         }
 
         emit Bankroll_Payout_Transferred(msg.sender, player, payout);
+    }
+
+    function transferPayout(
+        address player,
+        uint256 payout,
+        address tokenAddress,
+        uint256 tokenId
+    ) external {
+        if (!gs().isGame[msg.sender]) {
+            revert InvalidGameAddress();
+        }
+        if (!gs().isERC1155Token[tokenAddress]) {
+            revert InvalidTokenStandard(tokenAddress);
+        }
+
+        IERC1155(tokenAddress).safeTransferFrom(address(this), player, tokenId, payout, "");
+        emit Bankroll_Payout_Transferred_ERC1155(msg.sender, player, tokenAddress, tokenId, payout);
     }
 
 
@@ -560,6 +674,7 @@ contract BankLP is WithStorage {
     */
     function fundBankroll(address token, uint256 amount) external returns (bool) {
         require(token != address(0), "Use receive() for ETH funding");
+        if (gs().isERC1155Token[token]) revert InvalidTokenStandard(token);
         
         bool transferred = IERC20(token).transferFrom(msg.sender, address(this), amount);
         require(transferred, "ERC20: transfer failed");
@@ -568,7 +683,16 @@ contract BankLP is WithStorage {
         return transferred;
     }
 
+    function fundBankroll(address token, uint256 tokenId, uint256 amount) external returns (bool) {
+        if (!gs().isERC1155Token[token]) revert InvalidTokenStandard(token);
+
+        IERC1155(token).safeTransferFrom(msg.sender, address(this), tokenId, amount, "");
+        emit Bankroll_Received_Liquidity_ERC1155(token, tokenId, amount);
+        return true;
+    }
+
     event Bankroll_Withdrew_Liquidity(address indexed tokenAddress, uint256 amount);
+    event Bankroll_Withdrew_Liquidity_ERC1155(address indexed tokenAddress, uint256 indexed tokenId, uint256 amount);
 
     /**
     * @dev Withdraw liquidity from bankroll (only LP or owner)
@@ -577,6 +701,7 @@ contract BankLP is WithStorage {
     * @param amount Amount to withdraw
     */
     function withdrawBankroll(address recipient, address token, uint256 amount) external onlyLPOrOwner returns (bool) {
+        if (gs().isERC1155Token[token]) revert InvalidTokenStandard(token);
         bool transferred;
         if (token == address(0)) {
             require(reservedFunds[address(0)] + amount <= address(this).balance, "Insufficient available ETH balance");
@@ -592,6 +717,15 @@ contract BankLP is WithStorage {
         }
 
         return transferred;
+    }
+
+    function withdrawBankroll(address recipient, address token, uint256 tokenId, uint256 amount) external onlyLPOrOwner returns (bool) {
+        if (!gs().isERC1155Token[token]) revert InvalidTokenStandard(token);
+        require(getAvailableBalance(token, tokenId) >= amount, "Insufficient available token balance");
+
+        IERC1155(token).safeTransferFrom(address(this), recipient, tokenId, amount, "");
+        emit Bankroll_Withdrew_Liquidity_ERC1155(token, tokenId, amount);
+        return true;
     }
 
     /*
@@ -635,11 +769,13 @@ contract BankLP is WithStorage {
     }
 
     event CreatorFeePaid(address indexed game, address indexed creator, uint256 amount, address token);
+    event CreatorFeePaidERC1155(address indexed game, address indexed creator, uint256 amount, address token, uint256 tokenId);
     
     /*
      * Deposit ERC20 from game contract to subtract fee
     */
     function deposit(address token, uint256 amount) external {
+        if (gs().isERC1155Token[token]) revert InvalidTokenStandard(token);
         uint256 amountAfterFee = amount * 98 / 100;
         uint256 fee = amount - amountAfterFee;
 
@@ -674,10 +810,48 @@ contract BankLP is WithStorage {
         }
     }
 
+    function deposit(address token, uint256 tokenId, uint256 amount) external {
+        if (!gs().isERC1155Token[token]) revert InvalidTokenStandard(token);
+
+        uint256 amountAfterFee = amount * 98 / 100;
+        uint256 fee = amount - amountAfterFee;
+        bytes32 key = _erc1155Key(token, tokenId);
+
+        fees1155[key] += fee;
+        IERC1155(token).safeTransferFrom(msg.sender, address(this), tokenId, amount, "");
+
+        address game = msg.sender;
+        uint256 creatorShare = 0;
+        address creator = gameCreator[game];
+        uint256 creatorBps = creatorFeeBps[game];
+        if (creator != address(0) && creatorBps > 0) {
+            creatorShare = (fee * creatorBps) / 10000;
+            if (creatorShare > 0) {
+                IERC1155(token).safeTransferFrom(address(this), creator, tokenId, creatorShare, "");
+            }
+        }
+
+        uint256 treasuryFee = (fee - creatorShare) / 2;
+        if (treasuryFee > 0) {
+            IERC1155(token).safeTransferFrom(address(this), address(treasury), tokenId, treasuryFee, "");
+        }
+
+        emit Bankroll_Received_Player_Deposit_ERC1155(token, tokenId, amountAfterFee);
+        emit Bankroll_Treasury_Deposit_ERC1155(token, tokenId, treasuryFee);
+
+        if (creatorShare > 0) {
+            emit CreatorFeePaidERC1155(game, creator, creatorShare, token, tokenId);
+        }
+    }
+
     // Called by factory/owner to set creator and fee share for a game
     function setGameCreator(address game, address creator, uint256 feeBps) external onlyGameFactoryOrOwner {
         require(feeBps <= 2000, "Fee too high"); // Max 20%
         gameCreator[game] = creator;
         creatorFeeBps[game] = feeBps;
+    }
+
+    function _erc1155Key(address token, uint256 tokenId) internal pure returns (bytes32) {
+        return keccak256(abi.encode(token, tokenId));
     }
 }

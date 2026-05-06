@@ -5,7 +5,6 @@ import {
     Common, IBankrollRegistry,
     ChainSpecificUtil,
     IERC20, SafeERC20,
-    VRFConsumerBaseV2Plus, IVRFCoordinatorV2Plus,
     IDecimalAggregator
 } from "../Common.sol";
 
@@ -16,14 +15,9 @@ contract Plinko is Common {
     using SafeERC20 for IERC20;
 
     constructor(
-        address _registry,
-        address _vrf,
-        address link_eth_feed
-    ) VRFConsumerBaseV2Plus(_vrf) {
+        address _registry
+    ) {
         b_registry      = IBankrollRegistry(_registry);
-        ChainLinkVRF    = _vrf;
-        s_Coordinator   = IVRFCoordinatorV2Plus(_vrf);
-        LINK_ETH_FEED   = IDecimalAggregator(link_eth_feed);
 
         kellyFractions[0] = [
             573159,
@@ -210,11 +204,10 @@ contract Plinko is Common {
         }
 
         _kellyWager(wager, tokenAddress, numRows, risk);
-        uint256 fee = _transferWager(
+        _transferWager(
             tokenAddress,
             wager * numBets,
             1500000,
-            21,
             msgSender
         );
         uint256 id = _requestRandomWords(numBets);
@@ -242,7 +235,7 @@ contract Plinko is Common {
             numBets,
             stopGain,
             stopLoss,
-            fee
+            0
         );
     }
 
@@ -287,8 +280,8 @@ contract Plinko is Common {
         uint8 numRows,
         uint8 risk
     ) external {
-        if (msg.sender != owner()) {
-            revert NotOwner(owner(), msg.sender);
+        if (msg.sender != owner) {
+            revert NotOwner(owner, msg.sender);
         }
         if (isMultiplierSet[risk][numRows]) {
             revert MultiplierAlreadySet(numRows, risk);
@@ -310,7 +303,7 @@ contract Plinko is Common {
         isMultiplierSet[risk][numRows] = true;
     }
 
-    function fulfillRandomWords(
+    function _fulfillRandomWords(
         uint256 requestId,
         uint256[] calldata randomWords
     ) internal override {

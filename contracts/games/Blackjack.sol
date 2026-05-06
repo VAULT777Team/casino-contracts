@@ -5,7 +5,6 @@ import {
     Common, IBankrollRegistry,
     ChainSpecificUtil,
     IERC20, SafeERC20,
-    VRFConsumerBaseV2Plus, IVRFCoordinatorV2Plus,
     IDecimalAggregator
 } from "../Common.sol";
 
@@ -16,17 +15,13 @@ contract Blackjack is Common {
     using SafeERC20 for IERC20;
 
     constructor(
-        address _registry,
-        address _vrf,
-        address link_eth_feed
-    ) VRFConsumerBaseV2Plus(_vrf) {
+        address _registry
+    ) {
         b_registry      = IBankrollRegistry(_registry);
-        ChainLinkVRF    = _vrf;
-        s_Coordinator   = IVRFCoordinatorV2Plus(_vrf);
-        LINK_ETH_FEED   = IDecimalAggregator(link_eth_feed);
     }
 
     struct BlackjackGame {
+        uint256 baseWager;
         uint256 wager;
         uint256 requestID;
         address tokenAddress;
@@ -40,6 +35,8 @@ contract Blackjack is Common {
         bool playerBust;
         bool dealerBust;
         bool playerStand;
+        bool doubledDown;
+        bool doubleDownPending;
         bool gameActive;
         bool isInitialDeal;
     }
@@ -71,6 +68,21 @@ contract Blackjack is Common {
         uint256 VRFFee
     );
 
+    event Blackjack_DoubleDown_Event(
+        address indexed playerAddress,
+        uint256 additionalWager,
+        uint256 totalWager,
+        uint256 requestID,
+        uint256 VRFFee
+    );
+
+    event Blackjack_Surrender_Event(
+        address indexed playerAddress,
+        uint256 wager,
+        uint256 refund,
+        address tokenAddress
+    );
+
     event Blackjack_Outcome_Event(
         address indexed playerAddress,
         uint256 wager,
@@ -79,7 +91,11 @@ contract Blackjack is Common {
         uint8 finalPlayerScore,
         uint8 finalDealerScore,
         bool playerWin,
-        bool push
+        bool push,
+        uint8[10] playerCards,
+        uint8 playerCardCount,
+        uint8[10] dealerCards,
+        uint8 dealerCardCount
     );
 
     event Blackjack_Refund_Event(
@@ -93,6 +109,9 @@ contract Blackjack is Common {
     error AwaitingVRF(uint256 requestID);
     error GameNotActive();
     error PlayerAlreadyStood();
+    error DoubleDownNotAllowed();
+    error AlreadyDoubledDown();
+    error SurrenderNotAllowed();
     error WagerAboveLimit(uint256 wager, uint256 maxWager);
     error NoRequestPending();
     error BlockNumberTooLow(uint256 have, uint256 want);
@@ -118,16 +137,16 @@ contract Blackjack is Common {
         }
 
         _kellyWager(wager, tokenAddress);
-        uint256 fee = _transferWager(
+        _transferWager(
             tokenAddress,
             wager,
             600000,
-            28,
             msgSender
         );
 
         uint256 id = _requestRandomWords(3); // 2 player + 1 dealer up-card
 
+        game.baseWager = wager;
         game.wager = wager;
         game.tokenAddress = tokenAddress;
         game.requestID = id;
@@ -141,6 +160,8 @@ contract Blackjack is Common {
         game.playerBust = false;
         game.dealerBust = false;
         game.playerStand = false;
+        game.doubledDown = false;
+        game.doubleDownPending = false;
 
         blackjackIDs[id] = msgSender;
 
@@ -151,7 +172,7 @@ contract Blackjack is Common {
             [0, 0], // will be filled after VRF
             0,
             0,
-            fee
+            0
         );
     }
 
@@ -169,14 +190,13 @@ contract Blackjack is Common {
             revert PlayerAlreadyStood();
         }
 
-        uint256 VRFFee = _payVRFFee(400000, 20);
         uint256 id = _requestRandomWords(1);
 
         game.requestID = id;
         game.blockNumber = uint64(ChainSpecificUtil.getBlockNumber());
         blackjackIDs[id] = msgSender;
 
-        emit Blackjack_Hit_Event(msgSender, 0, 0, false, VRFFee);
+        emit Blackjack_Hit_Event(msgSender, 0, 0, false, 0);
     }
 
     function Blackjack_Stand() external payable nonReentrant {
@@ -194,14 +214,87 @@ contract Blackjack is Common {
 
         // Resolve dealer draw using VRF so the outcome can't be computed and reverted
         // within the same transaction.
-        uint256 VRFFee = _payVRFFee(600000, 28);
         uint256 id = _requestRandomWords(9); // dealer can draw up to 9 more cards (10 max, 1 already dealt)
 
         game.requestID = id;
         game.blockNumber = uint64(ChainSpecificUtil.getBlockNumber());
         blackjackIDs[id] = msgSender;
 
-        emit Blackjack_Stand_Event(msgSender, id, VRFFee);
+        emit Blackjack_Stand_Event(msgSender, id, 0);
+    }
+
+    function Blackjack_DoubleDown() external payable nonReentrant {
+        address msgSender = _msgSender();
+        BlackjackGame storage game = blackjackGames[msgSender];
+
+        if (!game.gameActive) {
+            revert GameNotActive();
+        }
+        if (game.requestID != 0) {
+            revert AwaitingVRF(game.requestID);
+        }
+        if (game.playerStand) {
+            revert PlayerAlreadyStood();
+        }
+        if (game.doubledDown || game.doubleDownPending) {
+            revert AlreadyDoubledDown();
+        }
+        if (game.playerBust || game.playerCardCount != 2) {
+            revert DoubleDownNotAllowed();
+        }
+
+        uint256 additionalWager = game.baseWager;
+        uint256 newTotalWager = game.wager + additionalWager;
+        _kellyWager(newTotalWager, game.tokenAddress);
+
+        _transferWager(
+            game.tokenAddress,
+            additionalWager,
+            800000,
+            msgSender
+        );
+
+        uint256 id = _requestRandomWords(10); // 1 player card + up to 9 dealer cards
+
+        game.wager = newTotalWager;
+        game.doubledDown = true;
+        game.doubleDownPending = true;
+        game.requestID = id;
+        game.blockNumber = uint64(ChainSpecificUtil.getBlockNumber());
+        blackjackIDs[id] = msgSender;
+
+        emit Blackjack_DoubleDown_Event(msgSender, additionalWager, newTotalWager, id, 0);
+    }
+
+    function Blackjack_Surrender() external nonReentrant {
+        address msgSender = _msgSender();
+        BlackjackGame storage game = blackjackGames[msgSender];
+
+        if (!game.gameActive) {
+            revert GameNotActive();
+        }
+        if (game.requestID != 0) {
+            revert AwaitingVRF(game.requestID);
+        }
+        if (game.playerStand) {
+            revert PlayerAlreadyStood();
+        }
+        if (game.doubledDown || game.doubleDownPending || game.playerBust || game.playerCardCount != 2) {
+            revert SurrenderNotAllowed();
+        }
+
+        uint256 wager = game.wager;
+        address tokenAddress = game.tokenAddress;
+        uint256 refund = wager / 2;
+
+        _transferToBankroll(tokenAddress, wager);
+        delete blackjackGames[msgSender];
+
+        if (refund > 0) {
+            _transferPayout(msgSender, refund, tokenAddress);
+        }
+
+        emit Blackjack_Surrender_Event(msgSender, wager, refund, tokenAddress);
     }
 
     function Blackjack_Refund() external nonReentrant {
@@ -235,7 +328,7 @@ contract Blackjack is Common {
         emit Blackjack_Refund_Event(msgSender, wager, tokenAddress);
     }
 
-    function fulfillRandomWords(
+    function _fulfillRandomWords(
         uint256 requestId,
         uint256[] calldata randomWords
     ) internal override {
@@ -260,19 +353,42 @@ contract Blackjack is Common {
 
             // check for blackjack
             if (game.playerScore == 21) {
-                // Player can now call Stand to resolve dealer via VRF.
+                // Auto-resolve dealer via VRF
                 game.playerStand = true;
+                _resolveDealerPlay(player, randomWords, 3);
+                return;
             }
         } else {
-            if (game.playerStand) {
+            if (game.doubleDownPending) {
+                game.doubleDownPending = false;
+
+                game.playerCards[game.playerCardCount] = _getCard(randomWords[0]);
+                game.playerCardCount++;
+                game.playerScore = _calculateScore(game.playerCards, game.playerCardCount);
+
+                if (game.playerScore > 21) {
+                    game.playerBust = true;
+                    _endGame(player, false, false);
+                    return;
+                }
+
+                game.playerStand = true;
+                _resolveDealerPlay(player, randomWords, 1);
+            } else if (game.playerStand) {
                 // stand: resolve dealer play using VRF randomness
-                _resolveDealerPlay(player, randomWords);
+                _resolveDealerPlay(player, randomWords, 0);
             } else {
                 // hit: give player one more card
                 game.playerCards[game.playerCardCount] = _getCard(randomWords[0]);
                 game.playerCardCount++;
                 game.playerScore = _calculateScore(game.playerCards, game.playerCardCount);
 
+                // auto-stand on 21
+                if(game.playerScore == 21){
+                    // stand: resolve dealer play using VRF randomness
+                    game.playerStand = true;
+                    _resolveDealerPlay(player, randomWords, 0);
+                }
                 if (game.playerScore > 21) {
                     game.playerBust = true;
                     _endGame(player, false, false);
@@ -281,7 +397,11 @@ contract Blackjack is Common {
         }
     }
 
-    function _resolveDealerPlay(address player, uint256[] calldata randomWords) internal {
+    function _resolveDealerPlay(
+        address player,
+        uint256[] calldata randomWords,
+        uint256 startIndex
+    ) internal {
         BlackjackGame storage game = blackjackGames[player];
 
         // dealer must hit on 16 and below, stand on 17 and above
@@ -289,14 +409,17 @@ contract Blackjack is Common {
 
         while (game.dealerScore < 17 && game.dealerCardCount < 10) {
             uint256 rv;
-            if (wordIndex < randomWords.length) {
-                rv = randomWords[wordIndex];
+            if (startIndex + wordIndex < randomWords.length) {
+                rv = randomWords[startIndex + wordIndex];
             } else {
                 // Safety fallback: derive extra entropy from VRF output if more words are unexpectedly needed.
+                uint256 seed = randomWords.length > 0
+                    ? randomWords[randomWords.length - 1]
+                    : uint256(keccak256(abi.encodePacked(player, game.dealerCardCount)));
                 rv = uint256(
                     keccak256(
                         abi.encodePacked(
-                            randomWords[randomWords.length - 1],
+                            seed,
                             wordIndex,
                             player,
                             game.dealerCardCount
@@ -349,11 +472,8 @@ contract Blackjack is Common {
 
         uint256 wager = game.wager;
         address tokenAddress = game.tokenAddress;
-        uint8 finalPlayerScore = game.playerScore;
-        uint8 finalDealerScore = game.dealerScore;
 
         _transferToBankroll(tokenAddress, wager);
-        delete blackjackGames[player];
 
         if (payout > 0) {
             _transferPayout(player, payout, tokenAddress);
@@ -364,11 +484,17 @@ contract Blackjack is Common {
             wager,
             payout,
             tokenAddress,
-            finalPlayerScore,
-            finalDealerScore,
+            game.playerScore,
+            game.dealerScore,
             playerWin,
-            push
+            push,
+            game.playerCards,
+            game.playerCardCount,
+            game.dealerCards,
+            game.dealerCardCount
         );
+
+        delete blackjackGames[player];
     }
 
     function _getCard(uint256 randomValue) internal pure returns (uint8) {

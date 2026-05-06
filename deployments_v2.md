@@ -40,7 +40,33 @@ registry = GameRegistry(_registry);
 | BankrollRegistry | `0x8736D858874715eA8e78C01884e337D1EDeC7643` |
 | BankLP | `0xC7138c752E0606C0f5Ee58b6471EA3fb0F91E2Ec` |
 | VaultLP | `0xFCF16FC477599f1D58671D3Fcb05C14B175BB663` |
+| VaultLP2 (active testnet liquidity pool) | `0xe12fd15B3891ac2815F53Fb7Bc7C14310c861D9d` |
 
+| BankLPV2 | `0x54FdD0Cb7131a53c492c611676C9A0166E23EeD1` |
+
+  Core Infrastructure:
+    BankLP:           0x54FdD0Cb7131a53c492c611676C9A0166E23EeD1
+    BankLP Registry:  0x8736D858874715eA8e78C01884e337D1EDeC7643
+    VRF:              0x5CE8D5A2BC84beb22a398CCA51996F7930313D61
+    LINK/ETH Feed:    0x5BBd5163c48c4bc9ec808Be651c2DBBe9B1E0e99
+    Forwarder:        0x0000000000000000000000000000000000000000
+  
+  Game Contracts:
+    CoinFlip:           0x7aEDc67293AcbabB5b3d258a286eAeFEC164754f
+    Dice:               0x77C58dCaCbA3721C5D5f03Fd4cD03961CbCfAcCC
+    VideoPoker:         0xD5023Aaa3C77E78E1A88B9cc5E667B40FaC57405
+    Blackjack:          0xCf4717ed46aB824497Dc65450fF10461Fe27C1b2
+    Plinko:             0xAb25c4279EeFb7cfFEbB0A922e2d6F432CCf792f
+    Slots:              0x16b9D0790Fa69751074534e43538fEcDE3418805
+    Mines:              0x44D1BAF47c71D07122ccfFF915C94863CA5A471a
+    Keno:               0xB682E97E8177a3e90096def21cC8D27a9d402079
+    FortuneWheel:       0xc3A1B6cFE97000Def1bbB7FF27BeE1f4c58c959F
+    Lottery:            0xaf73c0421a109825287B0f7c737Ab9B85D0Da02E
+    RockPaperScissors:  0x3c674AB551e8dCfFaa2199B28E660f84dD34F7cf
+    AmericanRoulette:   0x982334cFFb9f7cb20A95D7eC1b7b95e6Eadfe7E0
+    EuropeanRoulette:   0x9b0EfF0eBABBE31A5498712a4d27f97937b2e0aF
+
+    
 ### Games
 
 sepolia VP:

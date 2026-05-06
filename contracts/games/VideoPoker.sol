@@ -5,7 +5,6 @@ import {
     Common, IBankrollRegistry,
     ChainSpecificUtil,
     IERC20, SafeERC20,
-    VRFConsumerBaseV2Plus, IVRFCoordinatorV2Plus,
     IDecimalAggregator
 } from "../Common.sol";
 
@@ -17,14 +16,9 @@ contract VideoPoker is Common {
     using SafeERC20 for IERC20;
 
     constructor(
-        address _registry,
-        address _vrf,
-        address link_eth_feed
-    ) VRFConsumerBaseV2Plus(_vrf) {
+        address _registry
+    ) {
         b_registry      = IBankrollRegistry(_registry);
-        ChainLinkVRF    = _vrf;
-        s_Coordinator   = IVRFCoordinatorV2Plus(_vrf);
-        LINK_ETH_FEED   = IDecimalAggregator(link_eth_feed);
 
         for (uint8 s = 0; s < 4; s++) {
             for (uint8 n = 1; n < 14; n++) {
@@ -141,11 +135,10 @@ contract VideoPoker is Common {
         }
 
         _kellyWager(wager, tokenAddress);
-        uint256 fee = _transferWager(
+        _transferWager(
             tokenAddress,
             wager,
             500000,
-            36,
             msgSender
         );
         uint256 id = _requestRandomWords(5);
@@ -158,7 +151,7 @@ contract VideoPoker is Common {
         game.blockNumber = uint64(ChainSpecificUtil.getBlockNumber());
         game.ingame = true;
 
-        emit VideoPoker_Play_Event(msgSender, wager, tokenAddress, fee);
+        emit VideoPoker_Play_Event(msgSender, wager, tokenAddress, 0);
     }
 
     /**
@@ -186,13 +179,12 @@ contract VideoPoker is Common {
         }
 
         if (replaceCards) {
-            uint256 VRFFee = _payVRFFee(500000, 26);
             uint256 id = _requestRandomWords(5);
             videoPokerIDs[id] = msgSender;
             game.toReplace = toReplace;
             game.requestID = id;
             game.blockNumber = uint64(ChainSpecificUtil.getBlockNumber());
-            emit VideoPoker_Fee_Event(msgSender, VRFFee);
+            emit VideoPoker_Fee_Event(msgSender, 0);
         } else {
             if (msg.value != 0) {
                 revert NoFeeRequired();
@@ -249,7 +241,7 @@ contract VideoPoker is Common {
         emit VideoPoker_Refund_Event(msgSender, wager, tokenAddress);
     }
 
-    function fulfillRandomWords(
+    function _fulfillRandomWords(
         uint256 requestId,
         uint256[] calldata randomWords
     ) internal override {

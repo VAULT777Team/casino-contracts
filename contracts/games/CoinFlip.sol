@@ -5,7 +5,6 @@ import {
     Common, IBankLP, IBankrollRegistry,
     ChainSpecificUtil,
     IERC20, SafeERC20,
-    VRFConsumerBaseV2Plus, IVRFCoordinatorV2Plus,
     IDecimalAggregator
 } from "../Common.sol";
 
@@ -17,14 +16,9 @@ contract CoinFlip is Common {
     using SafeERC20 for IERC20;
 
     constructor(
-        address _registry,
-        address _vrf,
-        address link_eth_feed
-    ) VRFConsumerBaseV2Plus(_vrf) {
+        address _registry
+    ) {
         b_registry      = IBankrollRegistry(_registry);
-        ChainLinkVRF    = _vrf;
-        s_Coordinator   = IVRFCoordinatorV2Plus(_vrf);
-        LINK_ETH_FEED   = IDecimalAggregator(link_eth_feed);
     }
 
     struct CoinFlipGame {
@@ -137,7 +131,13 @@ contract CoinFlip is Common {
 
         uint256 maxPayout;
         if(stopGain > 0){
-            maxPayout = stopGain = (wager * numBets);
+            uint256 maxPossibleProfit = (wager * numBets * 9800) / 10000;
+            // If user asks for more than mathematically possible, cap it
+            if (stopGain > maxPossibleProfit) {
+                stopGain = maxPossibleProfit;
+            }
+            
+            maxPayout = stopGain;
         } else {
             maxPayout = (wager * numBets * 19800) / 10000;
         }
@@ -145,11 +145,10 @@ contract CoinFlip is Common {
         _reserveMaxPayout(tokenAddress, maxPayout);
 
         _kellyWager(wager, tokenAddress);
-        uint256 fee = _transferWager(
+        _transferWager(
             tokenAddress,
             wager * numBets,
             700000,
-            22,
             msgSender
         );
 
@@ -177,7 +176,7 @@ contract CoinFlip is Common {
             numBets,
             stopGain,
             stopLoss,
-            fee
+            0
         );
     }
 
@@ -213,7 +212,7 @@ contract CoinFlip is Common {
         emit CoinFlip_Refund_Event(msgSender, wager, tokenAddress);
     }
 
-    function fulfillRandomWords(
+    function _fulfillRandomWords(
         uint256 requestId,
         uint256[] calldata randomWords
     ) internal override {

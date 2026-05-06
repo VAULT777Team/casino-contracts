@@ -5,7 +5,6 @@ import {
     Common, IBankrollRegistry,
     ChainSpecificUtil,
     IERC20, SafeERC20,
-    VRFConsumerBaseV2Plus, IVRFCoordinatorV2Plus,
     IDecimalAggregator
 } from "../Common.sol";
 
@@ -16,14 +15,9 @@ contract Keno is Common {
     using SafeERC20 for IERC20;
 
     constructor(
-        address _registry,
-        address _vrf,
-        address link_eth_feed
-    ) VRFConsumerBaseV2Plus(_vrf) {
+        address _registry
+    ) {
         b_registry      = IBankrollRegistry(_registry);
-        ChainLinkVRF    = _vrf;
-        s_Coordinator   = IVRFCoordinatorV2Plus(_vrf);
-        LINK_ETH_FEED   = IDecimalAggregator(link_eth_feed);
         
         // set multipliers for different spot counts and hits
         _setKenoMultipliers();
@@ -133,11 +127,10 @@ contract Keno is Common {
         }
 
         _kellyWager(wager, tokenAddress, spotsSelected);
-        uint256 fee = _transferWager(
+        _transferWager(
             tokenAddress,
             wager * numBets,
             1000000,
-            25,
             msgSender
         );
 
@@ -168,7 +161,7 @@ contract Keno is Common {
             numBets,
             stopGain,
             stopLoss,
-            fee
+            0
         );
     }
 
@@ -201,7 +194,7 @@ contract Keno is Common {
         emit Keno_Refund_Event(msgSender, wager, tokenAddress);
     }
 
-    function fulfillRandomWords(
+    function _fulfillRandomWords(
         uint256 requestId,
         uint256[] calldata randomWords
     ) internal override {

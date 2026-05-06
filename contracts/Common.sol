@@ -1,31 +1,128 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.0;
 
-import {IVRFCoordinatorV2Plus, VRFV2PlusClient} from "@chainlink/contracts/src/v0.8/vrf/dev/interfaces/IVRFCoordinatorV2Plus.sol";
 import {IDecimalAggregator} from "@chainlink/contracts/src/v0.8/data-feeds/interfaces/IDecimalAggregator.sol";
-import {VRFConsumerBaseV2Plus} from "@chainlink/contracts/src/v0.8/vrf/dev/VRFConsumerBaseV2Plus.sol";
 
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
+import {ERC1155Holder} from "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Holder.sol";
 import {ChainSpecificUtil} from "./ChainSpecificUtil.sol";
 
 import {IBankrollRegistry} from "./bankroll/interfaces/IBankrollRegistry.sol";
 import {IBankLP} from "./bankroll/interfaces/IBankLP.sol";
 
-abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
+/// @title IRandomnessCoordinator
+/// @notice Interface for the randomness coordinator precompile
+interface IRandomnessCoordinator {
+    function requestRandomWords(
+        bytes32 keyHash,
+        uint64 subId,
+        uint16 requestConfirmations,
+        uint32 callbackGasLimit,
+        uint32 numWords
+    ) external returns (uint256 requestId);
+}
+
+/// @title RandomnessConsumer
+/// @notice Base contract for randomness consumers using low-level calls
+abstract contract RandomnessConsumer {
+    error OnlyCoordinator(address sender);
+    error RandomnessRequestFailed(bytes data);
+    error InvalidRandomnessResponse(bytes data);
+
+    event   RandomnessRequested(uint256 requestId);
+    event RandomnessFullfilling(uint256 requestId, uint256[] randomWords);
+    event RandomnessFulfilled(uint256 requestId, uint256[] randomWords);
+
+    address internal constant RANDOMNESS_COORDINATOR = 0x0000000000000000000000000000000000000800;
+    bytes4 internal constant REQUEST_RANDOM_WORDS_SELECTOR =
+        bytes4(keccak256("requestRandomWords(bytes32,uint64,uint16,uint32,uint32)"));
+
+    bytes32 internal s_keyHash;
+    uint64 internal s_subscriptionId;
+    uint16 internal s_requestConfirmations;
+    uint32 internal s_callbackGasLimit;
+
+    constructor(
+        bytes32 keyHash_,
+        uint64 subscriptionId_,
+        uint16 requestConfirmations_,
+        uint32 callbackGasLimit_
+    ) {
+        s_keyHash = keyHash_;
+        s_subscriptionId = subscriptionId_;
+        s_requestConfirmations = requestConfirmations_;
+        s_callbackGasLimit = callbackGasLimit_;
+    }
+
+    /// @dev Request randomness via low-level call to precompile
+    function _requestRandomWords(uint32 numWords) internal virtual returns (uint256 requestId) {
+        if (numWords == 0) revert RandomnessRequestFailed("No words requested");
+
+        // IMPORTANT: use low-level call for precompile addresses.
+        // High-level interface calls may revert with "call to non-contract address"
+        // because precompiles do not have deployed bytecode.
+        (bool ok, bytes memory ret) = RANDOMNESS_COORDINATOR.call(
+            abi.encodeWithSelector(
+                REQUEST_RANDOM_WORDS_SELECTOR,
+                s_keyHash,
+                s_subscriptionId,
+                s_requestConfirmations,
+                s_callbackGasLimit,
+                numWords
+            )
+        );
+
+        if (!ok) revert RandomnessRequestFailed(ret);
+        if (ret.length != 32) revert InvalidRandomnessResponse(ret);
+
+        requestId = abi.decode(ret, (uint256));
+
+        emit RandomnessRequested(requestId);
+    }
+
+    /// @notice Called by coordinator precompile; dispatches to consumer implementation
+    function rawFulfillRandomWords(uint256 requestId, uint256[] calldata randomWords) external {
+        emit RandomnessFullfilling(requestId, randomWords);
+        if (msg.sender != RANDOMNESS_COORDINATOR) revert OnlyCoordinator(msg.sender);
+        _fulfillRandomWords(requestId, randomWords);
+        emit RandomnessFulfilled(requestId, randomWords);
+    }
+
+    function _fulfillRandomWords(uint256 requestId, uint256[] calldata randomWords) internal virtual;
+}
+
+abstract contract Common is ReentrancyGuard, RandomnessConsumer, ERC1155Holder {
     using SafeERC20 for IERC20;
 
-    uint256 public VRFFees;
-    address internal ChainLinkVRF;
+    address internal constant CHAINLINK_VRF_COORDINATOR = 0x0000000000000000000000000000000000000800;
+    address internal ChainLinkVRF = CHAINLINK_VRF_COORDINATOR;
 
-    IDecimalAggregator      public LINK_ETH_FEED;
-    IBankrollRegistry       internal b_registry;
-    IVRFCoordinatorV2Plus   internal s_Coordinator;
+    IBankrollRegistry internal b_registry;
     
-    uint256 subscriptionId  = uint256(77667707628007624636163514136218109527264531590891917311719822980101224786380);
-    bytes32 keyHash         = 0x1770bdc7eec7771f7ba4ffd640f34260d7f095b79c92d34a5b2551d6f6cfd2be;
-    uint16 reqConfirmations = 3;
+    uint256 subscriptionId  = 1;
+    bytes32 keyHash         = 0xe9f223d7d83ec85c4f78042a4845af3a1c8df7757b4997b815ce4b8d07aca68c;
+    uint16 reqConfirmations = 2;
     uint32 callbackGasLimit = 2500000;
+
+    address public owner;
+
+    modifier onlyOwner() {
+        if (msg.sender != owner) {
+            revert NotOwner(owner, msg.sender);
+        }
+        _;
+    }
+
+    constructor() RandomnessConsumer(
+        0xe9f223d7d83ec85c4f78042a4845af3a1c8df7757b4997b815ce4b8d07aca68c,
+        1,
+        2,
+        2500000
+    ) {
+        owner = msg.sender;
+    }
 
     error NotApprovedBankroll();
     error InvalidValue(uint256 required, uint256 sent);
@@ -36,6 +133,7 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
     error PlayerSuspended(uint256 suspensionTime);
 
     event WagerTransferred(address game, address token, address player, uint256 amount);
+    event WagerTransferredERC1155(address game, address token, uint256 tokenId, address player, uint256 amount);
     event FeeTransferred(address game, address player, uint256 amount);
 
     function Bankroll() internal view returns (IBankLP) {
@@ -45,6 +143,10 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
 
     function setRegistry(address _registry) external onlyOwner {
         b_registry = IBankrollRegistry(_registry);
+    }
+
+    function transferOwnership(address newOwner) external onlyOwner {
+        owner = newOwner;
     }
 
     /**
@@ -59,6 +161,13 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
         Bankroll().reserveFunds(tokenAddress, maxPayout);
     }
 
+    function _reserveMaxPayout(address tokenAddress, uint256 tokenId, uint256 maxPayout) internal {
+        uint256 available = Bankroll().getAvailableBalance(tokenAddress, tokenId);
+        require(available >= maxPayout, "Insufficient bankroll for max payout");
+
+        Bankroll().reserveFunds(tokenAddress, tokenId, maxPayout);
+    }
+
     /**
      * @dev helper function to release reserved funds from bankroll
      * @param tokenAddress address of the token to release
@@ -66,6 +175,10 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
      */
     function _releaseReserve(address tokenAddress, uint256 amount) internal {
         Bankroll().releaseFunds(tokenAddress, amount);
+    }
+
+    function _releaseReserve(address tokenAddress, uint256 tokenId, uint256 amount) internal {
+        Bankroll().releaseFunds(tokenAddress, tokenId, amount);
     }
 
     /**
@@ -77,10 +190,9 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
     function _transferWager(
         address tokenAddress,
         uint256 wager,
-        uint256 gasAmount,
-        uint256 l1Multiplier,
+        uint256,
         address msgSender
-    ) internal returns (uint256 VRFfee) {
+    ) internal {
         if (wager == 0) revert ZeroWager();
         if (!Bankroll().getIsValidWager(address(this), tokenAddress)) revert NotApprovedBankroll();
         
@@ -92,39 +204,75 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
             revert PlayerSuspended(suspendedTime);
         }
         
-        VRFfee = getVRFFee(gasAmount, l1Multiplier);
-
         if (tokenAddress == address(0)) {
-            if (msg.value < wager + VRFfee) {
-                revert InvalidValue(wager + VRFfee, msg.value);
+            if (msg.value < wager) {
+                revert InvalidValue(wager, msg.value);
             }
-            _refundExcessValue(msg.value - (VRFfee + wager));
+            _refundExcessValue(msg.value - wager);
         } else {
-            if (msg.value < VRFfee) {
-                revert InvalidValue(VRFfee, msg.value);
-            }
-
             IERC20(tokenAddress).safeTransferFrom(
                 msgSender,
                 address(this),
                 wager
             );
-
-            _refundExcessValue(msg.value - VRFfee);
         }
 
         // play2earn
         uint256 playReward = Bankroll().getPlayerReward();
         if(playReward > 0){
-            uint256 reward = (wager * playReward) / 1000;
-            Bankroll().addPlayerReward(msgSender, reward);
+            uint256 reward = Bankroll().calculatePlayReward(tokenAddress, wager);
+            if (reward > 0) {
+                Bankroll().addPlayerReward(msgSender, reward);
+            }
         }
-
-        VRFFees += VRFfee;
 
         emit WagerTransferred(
             address(this),
             tokenAddress,
+            msgSender,
+            wager
+        );
+    }
+
+    function _transferWager(
+        address tokenAddress,
+        uint256 tokenId,
+        uint256 wager,
+        uint256,
+        address msgSender
+    ) internal {
+        if (wager == 0) revert ZeroWager();
+        if (!Bankroll().getIsValidWager(address(this), tokenAddress, tokenId)) revert NotApprovedBankroll();
+
+        (bool suspended, uint256 suspendedTime) = Bankroll().isPlayerSuspended(
+            msgSender
+        );
+
+        if (suspended) {
+            revert PlayerSuspended(suspendedTime);
+        }
+
+        IERC1155(tokenAddress).safeTransferFrom(
+            msgSender,
+            address(this),
+            tokenId,
+            wager,
+            ""
+        );
+
+        // play2earn
+        uint256 playReward = Bankroll().getPlayerReward();
+        if (playReward > 0) {
+            uint256 reward = Bankroll().calculatePlayReward(tokenAddress, wager);
+            if (reward > 0) {
+                Bankroll().addPlayerReward(msgSender, reward);
+            }
+        }
+
+        emit WagerTransferredERC1155(
+            address(this),
+            tokenAddress,
+            tokenId,
             msgSender,
             wager
         );
@@ -158,26 +306,23 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
         );
     }
 
-    /**
-     * @dev calculates in form of native token the fee charged by chainlink VRF
-     * @return fee amount of fee user has to pay
-     */
-    function getVRFFee(
-        uint256 gasAmount,
-        uint256 l1Multiplier
-    ) public view returns (uint256 fee) {
-        (, int256 answer, , , ) = LINK_ETH_FEED.latestRoundData();
+    function _transferToBankroll(
+        address tokenAddress,
+        uint256 tokenId,
+        uint256 amount
+    ) internal {
+        IERC1155(tokenAddress).setApprovalForAll(address(Bankroll()), true);
+        Bankroll().deposit(tokenAddress, tokenId, amount);
 
-        uint256 l1CostWei = (ChainSpecificUtil.getCurrentTxL1GasFees() *
-            l1Multiplier) / 10;
-
-        fee =
-            tx.gasprice *
-            (gasAmount) +
-            l1CostWei +
-            ((1e12 *
-                uint256(answer)) / 1e18);
+        emit WagerTransferredERC1155(
+            address(this),
+            tokenAddress,
+            tokenId,
+            msg.sender,
+            amount
+        );
     }
+
 
     /**
      * @dev returns to user the excess fee sent to pay for the VRF
@@ -191,43 +336,6 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
         if (!success) {
             revert RefundFailed();
         }
-    }
-
-    /**
-     * @dev function to charge user for VRF
-     */
-    function _payVRFFee(
-        uint256 gasAmount,
-        uint256 l1Multiplier
-    ) internal returns (uint256 VRFfee) {
-        VRFfee = getVRFFee(gasAmount, l1Multiplier);
-        if (msg.value < VRFfee) {
-            revert InvalidValue(VRFfee, msg.value);
-        }
-        _refundExcessValue(msg.value - VRFfee);
-        VRFFees += VRFfee;
-    }
-
-    /**
-     * @dev function to transfer VRF fees acumulated in the contract to the Bankroll
-     * Can only be called by owner
-     */
-    function transferFees(address to) external nonReentrant {
-        if (msg.sender != Bankroll().getOwner()) {
-            revert NotOwner(Bankroll().getOwner(), msg.sender);
-        }
-        uint256 fee = VRFFees;
-        VRFFees = 0;
-        (bool success, ) = payable(address(to)).call{value: fee}("");
-        if (!success) {
-            revert TransferFailed();
-        }
-
-        emit FeeTransferred(
-            address(this),
-            to,
-            fee
-        );
     }
 
     /**
@@ -262,33 +370,26 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
      */
     function _transferWagerPvP(
         address tokenAddress,
-        uint256 wager,
-        uint256 gasAmount
+        uint256 wager
     ) internal {
         if (!Bankroll().getIsValidWager(address(this), tokenAddress)) {
             revert NotApprovedBankroll();
         }
 
-        uint256 VRFfee = getVRFFee(gasAmount, 20);
         if (tokenAddress == address(0)) {
-            if (msg.value < wager + VRFfee) {
+            if (msg.value < wager) {
                 revert InvalidValue(wager, msg.value);
             }
 
-            _refundExcessValue(msg.value - (VRFfee + wager));
+            _refundExcessValue(msg.value - wager);
         } else {
-            if (msg.value < VRFfee) {
-                revert InvalidValue(VRFfee, msg.value);
-            }
 
             IERC20(tokenAddress).safeTransferFrom(
                 msg.sender,
                 address(this),
                 wager
             );
-            _refundExcessValue(msg.value - VRFfee);
         }
-        VRFFees += VRFfee;
     }
 
     /**
@@ -332,6 +433,15 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
         }
     }
 
+    function _transferHouseEdgePvP(
+        uint256 amount,
+        address tokenAddress,
+        uint256 tokenId
+    ) internal {
+        IERC1155(tokenAddress).setApprovalForAll(address(Bankroll()), true);
+        Bankroll().deposit(tokenAddress, tokenId, amount);
+    }
+
     /**
      * @dev function to request bankroll to give payout to player
      * @param player address of the player
@@ -346,25 +456,13 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
         Bankroll().transferPayout(player, payout, tokenAddress);
     }
 
-    /**
-     * @dev function to send the request for randomness to chainlink
-     * @param numWords number of random numbers required
-     */
-    function _requestRandomWords(
-        uint32 numWords
-    ) internal returns (uint256 s_requestId) {
-        s_requestId = s_Coordinator.requestRandomWords(
-            VRFV2PlusClient.RandomWordsRequest({
-                keyHash: keyHash,
-                subId: subscriptionId,
-                requestConfirmations: reqConfirmations,
-                callbackGasLimit: callbackGasLimit,
-                numWords: numWords,
-                extraArgs: VRFV2PlusClient._argsToBytes(
-                    VRFV2PlusClient.ExtraArgsV1({nativePayment: true})
-                )
-            })
-        );
+    function _transferPayout(
+        address player,
+        uint256 payout,
+        address tokenAddress,
+        uint256 tokenId
+    ) internal {
+        Bankroll().transferPayout(player, payout, tokenAddress, tokenId);
     }
 
     function _msgSender() internal view returns (address ret) {
