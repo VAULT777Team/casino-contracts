@@ -2,10 +2,9 @@
 pragma solidity ^0.8.0;
 
 import {
-    Common, IBankrollRegistry,
+    Common, VRFConfig, IBankrollRegistry,
     ChainSpecificUtil,
-    IERC20, SafeERC20,
-    IDecimalAggregator
+    IERC20, SafeERC20
 } from "../Common.sol";
 
 /**
@@ -25,6 +24,7 @@ contract Slots is Common {
 
     constructor(
         address _registry,
+        VRFConfig memory vrf,
         uint16[] memory _multipliers,
         uint16[] memory _outcomeNum,
         uint16 _numOutcomes,
@@ -33,7 +33,7 @@ contract Slots is Common {
         uint16[] memory _bonusOutcomeNum,
         uint8 _rowsPerSpin,
         uint8 _columnsPerSpin
-    ) {
+    ) Common(vrf) {
         b_registry = IBankrollRegistry(_registry);
 
         if (_numOutcomes > 0) {
@@ -440,7 +440,7 @@ contract Slots is Common {
     }
 
 
-    function _fulfillRandomWords(
+    function fulfillRandomWords(
         uint256 requestId,
         uint256[] calldata randomWords
     ) internal override {

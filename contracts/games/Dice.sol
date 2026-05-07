@@ -2,10 +2,9 @@
 pragma solidity ^0.8.0;
 
 import {
-    Common, IBankLP, IBankrollRegistry,
+    Common, VRFConfig, IBankrollRegistry,
     ChainSpecificUtil,
-    IERC20, SafeERC20,
-    IDecimalAggregator
+    IERC20, SafeERC20
 } from "../Common.sol";
 
 /**
@@ -16,9 +15,10 @@ contract Dice is Common {
     using SafeERC20 for IERC20;
 
     constructor(
-        address _registry
-    ) {
-        b_registry      = IBankrollRegistry(_registry);
+        address _registry,
+        VRFConfig memory vrf
+    ) Common(vrf) {
+        b_registry = IBankrollRegistry(_registry);
     }
 
     struct DiceGame {
@@ -27,6 +27,7 @@ contract Dice is Common {
         uint256 stopLoss;
         uint256 requestID;
         address tokenAddress;
+        uint256 tokenId;
         uint64 blockNumber;
         uint32 numBets;
         uint32 multiplier;
@@ -124,6 +125,7 @@ contract Dice is Common {
         uint256 wager,
         uint32 multiplier,
         address tokenAddress,
+        uint256 tokenId,
         bool isOver,
         uint32 numBets,
         uint256 stopGain,
@@ -140,11 +142,13 @@ contract Dice is Common {
             revert InvalidNumBets(100);
         }
 
-        _kellyWager(wager, tokenAddress, multiplier);
+        _kellyWager(wager, tokenAddress, tokenId, multiplier);
         _transferWager(
             tokenAddress,
+            tokenId,
             wager * numBets,
             700000,
+            20,
             msgSender
         );
 
@@ -156,6 +160,7 @@ contract Dice is Common {
             stopGain: stopGain,
             stopLoss: stopLoss,
             tokenAddress: tokenAddress,
+            tokenId: tokenId,
             blockNumber: uint64(ChainSpecificUtil.getBlockNumber()),
             numBets: numBets,
             multiplier: multiplier,
@@ -192,22 +197,16 @@ contract Dice is Common {
 
         uint256 wager = game.wager * game.numBets;
         address tokenAddress = game.tokenAddress;
+        uint256 tokenId = game.tokenId;
 
         delete (diceIDs[game.requestID]);
         delete (diceGames[msgSender]);
 
-        if (tokenAddress == address(0)) {
-            (bool success, ) = payable(msgSender).call{value: wager}("");
-            if (!success) {
-                revert TransferFailed();
-            }
-        } else {
-            IERC20(tokenAddress).safeTransfer(msgSender, wager);
-        }
+        _refundPlayer(msgSender, tokenAddress, tokenId, wager);
         emit Dice_Refund_Event(msgSender, wager, tokenAddress);
     }
 
-    function _fulfillRandomWords(
+    function fulfillRandomWords(
         uint256 requestId,
         uint256[] calldata randomWords
     ) internal override {
@@ -266,11 +265,11 @@ contract Dice is Common {
             payouts,
             i
         );
-        _transferToBankroll(tokenAddress, game.wager * game.numBets);
+        _transferToBankroll(tokenAddress, game.tokenId, game.wager * game.numBets);
         delete (diceIDs[requestId]);
         delete (diceGames[playerAddress]);
         if (payout != 0) {
-            _transferPayout(playerAddress, payout, tokenAddress);
+            _transferPayout(playerAddress, payout, tokenAddress, game.tokenId);
         }
     }
 
@@ -280,17 +279,13 @@ contract Dice is Common {
     function _kellyWager(
         uint256 wager,
         address tokenAddress,
+        uint256 tokenId,
         uint256 multiplier
     ) internal view {
-        uint256 balance;
-        if (tokenAddress == address(0)) {
-            balance = address(Bankroll()).balance;
-        } else {
-            balance = IERC20(tokenAddress).balanceOf(address(Bankroll()));
-        }
+        uint256 balance = Bankroll().isERC1155Token(tokenAddress)
+            ? Bankroll().getAvailableBalance(tokenAddress, tokenId)
+            : Bankroll().getAvailableBalance(tokenAddress);
         uint256 maxWager = (balance * (11000 - 10890)) / (multiplier - 10000);
-        if (wager > maxWager) {
-            revert WagerAboveLimit(wager, maxWager);
-        }
+        if (wager > maxWager) revert WagerAboveLimit(wager, maxWager);
     }
 }

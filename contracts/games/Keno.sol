@@ -2,10 +2,9 @@
 pragma solidity ^0.8.0;
 
 import {
-    Common, IBankrollRegistry,
+    Common, VRFConfig, IBankrollRegistry,
     ChainSpecificUtil,
-    IERC20, SafeERC20,
-    IDecimalAggregator
+    IERC20, SafeERC20
 } from "../Common.sol";
 
 /**
@@ -15,11 +14,10 @@ contract Keno is Common {
     using SafeERC20 for IERC20;
 
     constructor(
-        address _registry
-    ) {
-        b_registry      = IBankrollRegistry(_registry);
-        
-        // set multipliers for different spot counts and hits
+        address _registry,
+        VRFConfig memory vrf
+    ) Common(vrf) {
+        b_registry = IBankrollRegistry(_registry);
         _setKenoMultipliers();
     }
 
@@ -29,6 +27,7 @@ contract Keno is Common {
         uint256 stopLoss;
         uint256 requestID;
         address tokenAddress;
+        uint256 tokenId;
         uint64 blockNumber;
         uint32 numBets;
         uint8 spotsSelected;
@@ -95,6 +94,7 @@ contract Keno is Common {
     function Keno_Play(
         uint256 wager,
         address tokenAddress,
+        uint256 tokenId,
         uint8 spotsSelected,
         uint8[10] calldata selectedNumbers,
         uint32 numBets,
@@ -126,11 +126,13 @@ contract Keno is Common {
             }
         }
 
-        _kellyWager(wager, tokenAddress, spotsSelected);
+        _kellyWager(wager, tokenAddress, tokenId, spotsSelected);
         _transferWager(
             tokenAddress,
+            tokenId,
             wager * numBets,
             1000000,
+            20,
             msgSender
         );
 
@@ -142,6 +144,7 @@ contract Keno is Common {
         game.stopLoss = stopLoss;
         game.requestID = id;
         game.tokenAddress = tokenAddress;
+        game.tokenId = tokenId;
         game.blockNumber = uint64(ChainSpecificUtil.getBlockNumber());
         game.numBets = numBets;
         game.spotsSelected = spotsSelected;
@@ -178,23 +181,16 @@ contract Keno is Common {
 
         uint256 wager = game.wager * game.numBets;
         address tokenAddress = game.tokenAddress;
+        uint256 tokenId = game.tokenId;
 
         delete kenoIDs[game.requestID];
         delete kenoGames[msgSender];
 
-        if (tokenAddress == address(0)) {
-            (bool success, ) = payable(msgSender).call{value: wager}("");
-            if (!success) {
-                revert TransferFailed();
-            }
-        } else {
-            IERC20(tokenAddress).safeTransfer(msgSender, wager);
-        }
-        
+        _refundPlayer(msgSender, tokenAddress, tokenId, wager);
         emit Keno_Refund_Event(msgSender, wager, tokenAddress);
     }
 
-    function _fulfillRandomWords(
+    function fulfillRandomWords(
         uint256 requestId,
         uint256[] calldata randomWords
     ) internal override {
@@ -249,12 +245,11 @@ contract Keno is Common {
             i
         );
         
-        _transferToBankroll(tokenAddress, game.wager * game.numBets);
+        _transferToBankroll(tokenAddress, game.tokenId, game.wager * game.numBets);
         delete kenoIDs[requestId];
         delete kenoGames[playerAddress];
-        
         if (payout != 0) {
-            _transferPayout(playerAddress, payout, tokenAddress);
+            _transferPayout(playerAddress, payout, tokenAddress, game.tokenId);
         }
     }
 
@@ -353,13 +348,10 @@ contract Keno is Common {
         kenoMultipliers[10][10] = 10000000; // 100000x
     }
 
-    function _kellyWager(uint256 wager, address tokenAddress, uint8 spots) internal view {
-        uint256 balance;
-        if (tokenAddress == address(0)) {
-            balance = address(Bankroll()).balance;
-        } else {
-            balance = IERC20(tokenAddress).balanceOf(address(Bankroll()));
-        }
+    function _kellyWager(uint256 wager, address tokenAddress, uint256 tokenId, uint8 spots) internal view {
+        uint256 balance = Bankroll().isERC1155Token(tokenAddress)
+            ? Bankroll().getAvailableBalance(tokenAddress, tokenId)
+            : Bankroll().getAvailableBalance(tokenAddress);
         
         // conservative kelly for keno (high variance game)
         uint256 kellyFraction;

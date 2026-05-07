@@ -2,10 +2,9 @@
 pragma solidity ^0.8.0;
 
 import {
-    Common, IBankrollRegistry,
+    Common, VRFConfig, IBankrollRegistry,
     ChainSpecificUtil,
-    IERC20, SafeERC20,
-    IDecimalAggregator
+    IERC20, SafeERC20
 } from "../Common.sol";
 
 /**
@@ -16,9 +15,10 @@ contract Rug is Common {
     using SafeERC20 for IERC20;
 
     constructor(
-        address _registry
-    ) {
-        b_registry      = IBankrollRegistry(_registry);
+        address _registry,
+        VRFConfig memory vrf
+    ) Common(vrf) {
+        b_registry = IBankrollRegistry(_registry);
     }
 
     struct CoinFlipGame {
@@ -192,7 +192,7 @@ contract Rug is Common {
         emit CoinFlip_Refund_Event(msgSender, wager, tokenAddress);
     }
 
-    function _fulfillRandomWords(
+    function fulfillRandomWords(
         uint256 requestId,
         uint256[] calldata randomWords
     ) internal override {

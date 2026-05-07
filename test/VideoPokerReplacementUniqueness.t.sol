@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
 import "../contracts/games/VideoPoker.sol";
+import {VRFConfig} from "../contracts/Common.sol";
 
 contract MockBankrollRegistry {
     address public bankroll;
@@ -45,8 +46,8 @@ contract MockBankroll {
 }
 
 contract VideoPokerHarness is VideoPoker {
-    constructor(address _registry)
-        VideoPoker(_registry)
+    constructor(address _registry, VRFConfig memory vrf)
+        VideoPoker(_registry, vrf)
     {}
 
     function setGameForTest(
@@ -91,7 +92,15 @@ contract VideoPokerReplacementUniquenessTest is Test {
     function testReplacementCannotCreateDuplicateCards() public {
         MockBankroll bankroll = new MockBankroll();
         MockBankrollRegistry registry = new MockBankrollRegistry(address(bankroll));
-        VideoPokerHarness poker = new VideoPokerHarness(address(registry));
+        VRFConfig memory vrf = VRFConfig({
+            coordinator: address(0x1111),
+            keyHash: bytes32(0),
+            subId: 0,
+            reqConfirmations: 3,
+            callbackGasLimit: 2_000_000,
+            linkEthFeed: address(0x2222)
+        });
+        VideoPokerHarness poker = new VideoPokerHarness(address(registry), vrf);
 
         address player = address(0x1234);
 

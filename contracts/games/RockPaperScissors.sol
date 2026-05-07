@@ -2,10 +2,9 @@
 pragma solidity ^0.8.0;
 
 import {
-    Common, IBankrollRegistry,
+    Common, VRFConfig, IBankrollRegistry,
     ChainSpecificUtil,
-    IERC20, SafeERC20,
-    IDecimalAggregator
+    IERC20, SafeERC20
 } from "../Common.sol";
 
 /**
@@ -16,9 +15,10 @@ contract RockPaperScissors is Common {
     using SafeERC20 for IERC20;
 
     constructor(
-        address _registry
-    ) {
-        b_registry      = IBankrollRegistry(_registry);
+        address _registry,
+        VRFConfig memory vrf
+    ) Common(vrf) {
+        b_registry = IBankrollRegistry(_registry);
     }
 
     struct RockPaperScissorsGame {
@@ -27,6 +27,7 @@ contract RockPaperScissors is Common {
         uint256 stopLoss;
         uint256 requestID;
         address tokenAddress;
+        uint256 tokenId;
         uint64 blockNumber;
         uint32 numBets;
         uint8 action;
@@ -119,6 +120,7 @@ contract RockPaperScissors is Common {
     function RockPaperScissors_Play(
         uint256 wager,
         address tokenAddress,
+        uint256 tokenId,
         uint8 action,
         uint32 numBets,
         uint256 stopGain,
@@ -135,11 +137,13 @@ contract RockPaperScissors is Common {
             revert InvalidNumBets(100);
         }
 
-        _kellyWager(wager, tokenAddress);
+        _kellyWager(wager, tokenAddress, tokenId);
         _transferWager(
             tokenAddress,
+            tokenId,
             wager * numBets,
             800000,
+            20,
             msgSender
         );
         uint256 id = _requestRandomWords(numBets);
@@ -150,6 +154,7 @@ contract RockPaperScissors is Common {
             stopGain: stopGain,
             stopLoss: stopLoss,
             tokenAddress: tokenAddress,
+            tokenId: tokenId,
             blockNumber: uint64(ChainSpecificUtil.getBlockNumber()),
             numBets: numBets,
             action: action
@@ -185,21 +190,14 @@ contract RockPaperScissors is Common {
         uint256 wager = game.wager * game.numBets;
         address tokenAddress = game.tokenAddress;
 
+        uint256 tokenId = game.tokenId;
         delete (rockPaperScissorsIDs[game.requestID]);
         delete (rockPaperScissorsGames[msgSender]);
-
-        if (tokenAddress == address(0)) {
-            (bool success, ) = payable(msgSender).call{value: wager}("");
-            if (!success) {
-                revert TransferFailed();
-            }
-        } else {
-            IERC20(tokenAddress).safeTransfer(msgSender, wager);
-        }
+        _refundPlayer(msgSender, tokenAddress, tokenId, wager);
         emit RockPaperScissors_Refund_Event(msgSender, wager, tokenAddress);
     }
 
-    function _fulfillRandomWords(
+    function fulfillRandomWords(
         uint256 requestId,
         uint256[] calldata randomWords
     ) internal override {
@@ -258,11 +256,11 @@ contract RockPaperScissors is Common {
             payouts,
             i
         );
-        _transferToBankroll(tokenAddress, game.wager * game.numBets);
+        _transferToBankroll(tokenAddress, game.tokenId, game.wager * game.numBets);
         delete (rockPaperScissorsIDs[requestId]);
         delete (rockPaperScissorsGames[playerAddress]);
         if (payout != 0) {
-            _transferPayout(playerAddress, payout, tokenAddress);
+            _transferPayout(playerAddress, payout, tokenAddress, game.tokenId);
         }
     }
 
@@ -291,13 +289,10 @@ contract RockPaperScissors is Common {
     /**
      * @dev calculates the maximum wager allowed based on the bankroll size
      */
-    function _kellyWager(uint256 wager, address tokenAddress) internal view {
-        uint256 balance;
-        if (tokenAddress == address(0)) {
-            balance = address(Bankroll()).balance;
-        } else {
-            balance = IERC20(tokenAddress).balanceOf(address(Bankroll()));
-        }
+    function _kellyWager(uint256 wager, address tokenAddress, uint256 tokenId) internal view {
+        uint256 balance = Bankroll().isERC1155Token(tokenAddress)
+            ? Bankroll().getAvailableBalance(tokenAddress, tokenId)
+            : Bankroll().getAvailableBalance(tokenAddress);
         uint256 maxWager = (balance * 1683629) / 100000000;
         if (wager > maxWager) {
             revert WagerAboveLimit(wager, maxWager);

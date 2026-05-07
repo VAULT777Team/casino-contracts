@@ -2,9 +2,8 @@
 pragma solidity ^0.8.0;
 
 import {
-    Common, IBankrollRegistry,
-    IERC20, SafeERC20,
-    IDecimalAggregator
+    Common, VRFConfig, IBankrollRegistry,
+    IERC20, SafeERC20
 } from "../Common.sol";
 
 /**
@@ -15,9 +14,10 @@ contract Lottery is Common {
     using SafeERC20 for IERC20;
 
     constructor(
-        address _registry
-    ) {
-        b_registry      = IBankrollRegistry(_registry);
+        address _registry,
+        VRFConfig memory vrf
+    ) Common(vrf) {
+        b_registry = IBankrollRegistry(_registry);
         
         lotteryEpochDuration = 1 days;
     }
@@ -277,7 +277,7 @@ contract Lottery is Common {
     /**
      * @dev VRF callback to select winner
      */
-    function _fulfillRandomWords(
+    function fulfillRandomWords(
         uint256 requestId,
         uint256[] calldata randomWords
     ) internal override {

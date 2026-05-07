@@ -2,11 +2,9 @@
 pragma solidity ^0.8.0;
 
 import {
-    Common, IBankLP, IBankrollRegistry,
+    Common, VRFConfig, IBankrollRegistry,
     ChainSpecificUtil,
-    IERC20, SafeERC20,
-
-    IDecimalAggregator
+    IERC20, SafeERC20
 } from "../../Common.sol";
 
 /**
@@ -18,9 +16,10 @@ contract AmericanRoulette is Common {
     using SafeERC20 for IERC20;
 
     constructor(
-        address _registry
-    ) {
-        b_registry      = IBankrollRegistry(_registry);
+        address _registry,
+        VRFConfig memory vrf
+    ) Common(vrf) {
+        b_registry = IBankrollRegistry(_registry);
     }
 
     // -----------------------------
@@ -323,7 +322,7 @@ contract AmericanRoulette is Common {
     // -----------------------------
     // VRF CALLBACK
     // -----------------------------
-    function _fulfillRandomWords(
+    function fulfillRandomWords(
         uint256 requestId,
         uint256[] calldata randomWords
     ) internal override {

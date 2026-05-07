@@ -15,6 +15,7 @@ import {FortuneWheel} from "../contracts/games/FortuneWheel.sol";
 import {Lottery} from "../contracts/games/Lottery.sol";
 import {AmericanRoulette} from "../contracts/games/Roulette/AmericanRoulette.sol";
 import {EuropeanRoulette} from "../contracts/games/Roulette/EuropeanRoulette.sol";
+import {VRFConfig} from "../contracts/Common.sol";
 
 contract DeployAllGames is Script {
     // Core infrastructure addresses (from .env)
@@ -50,6 +51,7 @@ contract DeployAllGames is Script {
 
     function run() public {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+        VRFConfig memory vrf = _buildVRFConfig();
         
         vm.startBroadcast(deployerPrivateKey);
 
@@ -60,57 +62,57 @@ contract DeployAllGames is Script {
 
         // Deploy games without configs
         console.log("Deploying CoinFlip...");
-        coinFlip = address(new CoinFlip(BANKLP_REGISTRY));
+        coinFlip = address(new CoinFlip(BANKLP_REGISTRY, vrf));
         console.log("CoinFlip deployed to:", coinFlip);
         console.log("");
 
         console.log("Deploying RockPaperScissors...");
-        rockPaperScissors = address(new RockPaperScissors(BANKLP_REGISTRY));
+        rockPaperScissors = address(new RockPaperScissors(BANKLP_REGISTRY, vrf));
         console.log("RockPaperScissors deployed to:", rockPaperScissors);
         console.log("");
 
         console.log("Deploying Dice...");
-        dice = address(new Dice(BANKLP_REGISTRY));
+        dice = address(new Dice(BANKLP_REGISTRY, vrf));
         console.log("Dice deployed to:", dice);
         console.log("");
 
         console.log("Deploying VideoPoker...");
-        videoPoker = address(new VideoPoker(BANKLP_REGISTRY));
+        videoPoker = address(new VideoPoker(BANKLP_REGISTRY, vrf));
         console.log("VideoPoker deployed to:", videoPoker);
         console.log("");
 
         console.log("Deploying Blackjack...");
-        blackjack = address(new Blackjack(BANKLP_REGISTRY));
+        blackjack = address(new Blackjack(BANKLP_REGISTRY, vrf));
         console.log("Blackjack deployed to:", blackjack);
         console.log("");
 
         console.log("Deploying Plinko...");
-        plinko = address(new Plinko(BANKLP_REGISTRY));
+        plinko = address(new Plinko(BANKLP_REGISTRY, vrf));
         console.log("Plinko deployed to:", plinko);
         console.log("");
 
         console.log("Deploying Keno...");
-        keno = address(new Keno(BANKLP_REGISTRY));
+        keno = address(new Keno(BANKLP_REGISTRY, vrf));
         console.log("Keno deployed to:", keno);
         console.log("");
 
         console.log("Deploying FortuneWheel...");
-        fortuneWheel = address(new FortuneWheel(BANKLP_REGISTRY));
+        fortuneWheel = address(new FortuneWheel(BANKLP_REGISTRY, vrf));
         console.log("FortuneWheel deployed to:", fortuneWheel);
         console.log("");
 
         console.log("Deploying Lottery...");
-        lottery = address(new Lottery(BANKLP_REGISTRY));
+        lottery = address(new Lottery(BANKLP_REGISTRY, vrf));
         console.log("Lottery deployed to:", lottery);
         console.log("");
 
         console.log("Deploying AmericanRoulette...");
-        americanRoulette = address(new AmericanRoulette(BANKLP_REGISTRY));
+        americanRoulette = address(new AmericanRoulette(BANKLP_REGISTRY, vrf));
         console.log("AmericanRoulette deployed to:", americanRoulette);
         console.log("");
 
         console.log("Deploying EuropeanRoulette...");
-        europeanRoulette = address(new EuropeanRoulette(BANKLP_REGISTRY));
+        europeanRoulette = address(new EuropeanRoulette(BANKLP_REGISTRY, vrf));
         console.log("EuropeanRoulette deployed to:", europeanRoulette);
         console.log("");
 
@@ -164,6 +166,7 @@ contract DeployAllGames is Script {
 
         slots = address(new Slots(
             BANKLP_REGISTRY,
+            vrf,
             slotsMultipliers,
             slotsOutcomes,
             343,
@@ -188,6 +191,7 @@ contract DeployAllGames is Script {
 
         Slots vaultBonanzaContract = new Slots(
             BANKLP_REGISTRY,
+            vrf,
             emptyU16,
             emptyU16,
             0,
@@ -239,7 +243,7 @@ contract DeployAllGames is Script {
         minesMaxReveal[16] = 3; minesMaxReveal[17] = 2; minesMaxReveal[18] = 2; minesMaxReveal[19] = 2;
         minesMaxReveal[20] = 2; minesMaxReveal[21] = 1; minesMaxReveal[22] = 1; minesMaxReveal[23] = 1;
         
-        mines = address(new Mines(BANKLP_REGISTRY, minesMaxReveal));
+        mines = address(new Mines(BANKLP_REGISTRY, vrf, minesMaxReveal));
         console.log("Mines deployed to:", mines);
         console.log("");
 
@@ -276,6 +280,17 @@ contract DeployAllGames is Script {
         console.log("========================================");
         console.log("Deployment Complete!");
         console.log("========================================");
+    }
+
+    function _buildVRFConfig() internal view returns (VRFConfig memory) {
+        return VRFConfig({
+            coordinator: vrfCoordinator,
+            keyHash: vm.envBytes32("VRF_KEY_HASH"),
+            subId: vm.envUint("VRF_SUBSCRIPTION_ID"),
+            reqConfirmations: uint16(vm.envUint("VRF_MIN_CONFIRMATIONS")),
+            callbackGasLimit: uint32(vm.envUint("VRF_CALLBACK_GAS_LIMIT")),
+            linkEthFeed: linkEthFeed
+        });
     }
 
     function _configureVaultBonanzaInBatches(
@@ -348,10 +363,6 @@ contract DeployAllGames is Script {
             uint16[] memory bonusOutcomes
         )
     {
-        uint16[7] memory threeKindMult = [uint16(5), 2, 2, 2, 2, 1, 1];
-        uint16[7] memory fourKindMult = [uint16(15), 12, 8, 6, 4, 3, 2];
-        uint16[7] memory fiveKindMult = [uint16(110), 30, 85, 30, 70, 50, 25];
-
         uint16[] memory tmpOutcomes = new uint16[](16807);
         uint16[] memory tmpMultipliers = new uint16[](16807);
         uint16[] memory tmpBonusOutcomes = new uint16[](16807);
@@ -362,32 +373,7 @@ contract DeployAllGames is Script {
         uint16 bonusCount;
 
         for (uint16 outcomeId = 0; outcomeId < 16807; outcomeId++) {
-            uint16 mult;
-            uint8 bonusRoundsTotal;
-            uint16 bonusAddTotal;
-
-            uint8[7] memory counts = _symbolCounts(outcomeId);
-
-            for (uint8 symbol = 0; symbol < 7; symbol++) {
-                uint8 count = counts[symbol];
-
-                if (count == 3) {
-                    mult += threeKindMult[symbol];
-                } else if (count == 4) {
-                    mult += fourKindMult[symbol];
-                } else if (count == 5) {
-                    mult += fiveKindMult[symbol];
-                }
-
-                if (count >= 4) {
-                    uint8 rounds = count == 4 ? 6 : 10;
-                    bonusRoundsTotal += rounds;
-
-                    if (symbol >= 5) {
-                        bonusAddTotal += count == 4 ? 6 : 13;
-                    }
-                }
-            }
+            (uint16 mult, uint8 bonusRoundsTotal, uint16 bonusAddTotal) = _calcOutcomeValues(outcomeId);
 
             if (mult > 0) {
                 tmpOutcomes[winCount] = outcomeId;
@@ -418,6 +404,45 @@ contract DeployAllGames is Script {
             bonusMultipliers[i] = tmpBonusMultipliers[i];
             bonusRounds[i] = tmpBonusRounds[i];
         }
+    }
+
+    function _calcOutcomeValues(uint16 outcomeId)
+        internal
+        pure
+        returns (uint16, uint8, uint16)
+    {
+        uint16[7] memory threeKindMult = [uint16(5), 2, 2, 2, 2, 1, 1];
+        uint16[7] memory fourKindMult = [uint16(15), 12, 8, 6, 4, 3, 2];
+        uint16[7] memory fiveKindMult = [uint16(110), 30, 85, 30, 70, 50, 25];
+
+        uint16 mult;
+        uint8 bonusRoundsTotal;
+        uint16 bonusAddTotal;
+
+        uint8[7] memory counts = _symbolCounts(outcomeId);
+
+        for (uint8 symbol = 0; symbol < 7; symbol++) {
+            uint8 count = counts[symbol];
+
+            if (count == 3) {
+                mult += threeKindMult[symbol];
+            } else if (count == 4) {
+                mult += fourKindMult[symbol];
+            } else if (count == 5) {
+                mult += fiveKindMult[symbol];
+            }
+
+            if (count >= 4) {
+                uint8 rounds = count == 4 ? 6 : 10;
+                bonusRoundsTotal += rounds;
+
+                if (symbol >= 5) {
+                    bonusAddTotal += count == 4 ? 6 : 13;
+                }
+            }
+        }
+
+        return (mult, bonusRoundsTotal, bonusAddTotal);
     }
 
     function _symbolCounts(uint16 outcomeId) internal pure returns (uint8[7] memory counts) {

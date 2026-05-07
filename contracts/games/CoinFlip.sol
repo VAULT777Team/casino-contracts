@@ -2,10 +2,9 @@
 pragma solidity ^0.8.0;
 
 import {
-    Common, IBankLP, IBankrollRegistry,
+    Common, VRFConfig, IBankrollRegistry,
     ChainSpecificUtil,
-    IERC20, SafeERC20,
-    IDecimalAggregator
+    IERC20, SafeERC20
 } from "../Common.sol";
 
 /**
@@ -16,9 +15,10 @@ contract CoinFlip is Common {
     using SafeERC20 for IERC20;
 
     constructor(
-        address _registry
-    ) {
-        b_registry      = IBankrollRegistry(_registry);
+        address _registry,
+        VRFConfig memory vrf
+    ) Common(vrf) {
+        b_registry = IBankrollRegistry(_registry);
     }
 
     struct CoinFlipGame {
@@ -27,6 +27,7 @@ contract CoinFlip is Common {
         uint256 stopLoss;
         uint256 requestID;
         address tokenAddress;
+        uint256 tokenId;
         uint64 blockNumber;
         uint32 numBets;
         uint256 maxPayout;
@@ -116,6 +117,7 @@ contract CoinFlip is Common {
     function CoinFlip_Play(
         uint256 wager,
         address tokenAddress,
+        uint256 tokenId,
         bool isHeads,
         uint32 numBets,
         uint256 stopGain,
@@ -142,13 +144,15 @@ contract CoinFlip is Common {
             maxPayout = (wager * numBets * 19800) / 10000;
         }
 
-        _reserveMaxPayout(tokenAddress, maxPayout);
+        _reserveMaxPayout(tokenAddress, tokenId, maxPayout);
 
-        _kellyWager(wager, tokenAddress);
+        _kellyWager(wager, tokenAddress, tokenId);
         _transferWager(
             tokenAddress,
+            tokenId,
             wager * numBets,
             700000,
+            20,
             msgSender
         );
 
@@ -160,6 +164,7 @@ contract CoinFlip is Common {
             stopGain: stopGain,
             stopLoss: stopLoss,
             tokenAddress: tokenAddress,
+            tokenId: tokenId,
             blockNumber: uint64(ChainSpecificUtil.getBlockNumber()),
             numBets: numBets,
             maxPayout: maxPayout,
@@ -195,24 +200,18 @@ contract CoinFlip is Common {
 
         uint256 wager = game.wager * game.numBets;
         address tokenAddress = game.tokenAddress;
+        uint256 tokenId = game.tokenId;
 
-        _releaseReserve(game.tokenAddress, game.maxPayout);
+        _releaseReserve(tokenAddress, tokenId, game.maxPayout);
 
         delete (coinIDs[game.requestID]);
         delete (coinFlipGames[msgSender]);
 
-        if (tokenAddress == address(0)) {
-            (bool success, ) = payable(msgSender).call{value: wager}("");
-            if (!success) {
-                revert TransferFailed();
-            }
-        } else {
-            IERC20(tokenAddress).safeTransfer(msgSender, wager);
-        }
+        _refundPlayer(msgSender, tokenAddress, tokenId, wager);
         emit CoinFlip_Refund_Event(msgSender, wager, tokenAddress);
     }
 
-    function _fulfillRandomWords(
+    function fulfillRandomWords(
         uint256 requestId,
         uint256[] calldata randomWords
     ) internal override {
@@ -254,7 +253,7 @@ contract CoinFlip is Common {
             totalValue -= int256(game.wager);
         }
 
-        _releaseReserve(tokenAddress, game.maxPayout);
+        _releaseReserve(tokenAddress, game.tokenId, game.maxPayout);
 
         payout += (game.numBets - i) * game.wager;
 
@@ -267,11 +266,11 @@ contract CoinFlip is Common {
             payouts,
             i
         );
-        _transferToBankroll(tokenAddress, game.wager * game.numBets);
+        _transferToBankroll(tokenAddress, game.tokenId, game.wager * game.numBets);
         delete (coinIDs[requestId]);
         delete (coinFlipGames[playerAddress]);
         if (payout != 0) {
-            _transferPayout(playerAddress, payout, tokenAddress);
+            _transferPayout(playerAddress, payout, tokenAddress, game.tokenId);
         }
     }
 
@@ -279,12 +278,11 @@ contract CoinFlip is Common {
      * @dev calculates the maximum wager allowed based on the bankroll size
      take into account numBets
      */
-    function _kellyWager(uint256 wager, address tokenAddress) internal view {
-        uint256 balance = Bankroll().getAvailableBalance(tokenAddress);
+    function _kellyWager(uint256 wager, address tokenAddress, uint256 tokenId) internal view {
+        uint256 balance = Bankroll().isERC1155Token(tokenAddress)
+            ? Bankroll().getAvailableBalance(tokenAddress, tokenId)
+            : Bankroll().getAvailableBalance(tokenAddress);
         uint256 maxWager = (balance * 1122448) / 100000000;
-
-        if(wager > maxWager){
-            revert WagerAboveLimit(wager, maxWager);
-        }
+        if (wager > maxWager) revert WagerAboveLimit(wager, maxWager);
     }
 }

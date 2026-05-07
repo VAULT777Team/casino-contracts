@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import {
-    Common, IBankrollRegistry,
+    Common, VRFConfig, IBankrollRegistry,
     IERC20, SafeERC20
 } from "../../Common.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
@@ -100,8 +100,9 @@ contract Escrow is Common, EIP712 {
     error InvalidExpectedPayout(uint256 expectedPayoutBp);
 
     constructor(
-        address _registry
-    ) EIP712("Crash", "1") {
+        address _registry,
+        VRFConfig memory vrf
+    ) Common(vrf) EIP712("Crash", "1") {
         b_registry = IBankrollRegistry(_registry);
 
         defaultConfigId = 0;
@@ -443,7 +444,7 @@ contract Escrow is Common, EIP712 {
         emit WagerTransferred(address(this), tokenAddress, msgSender, wager);
     }
 
-    function _fulfillRandomWords(uint256, uint256[] calldata) internal pure override {
+    function fulfillRandomWords(uint256, uint256[] calldata) internal pure override {
         // Not used in Crash game
         revert("Not implemented");
     }

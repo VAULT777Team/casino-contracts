@@ -2,10 +2,9 @@
 pragma solidity ^0.8.0;
 
 import {
-    Common, IBankrollRegistry,
+    Common, VRFConfig, IBankrollRegistry,
     ChainSpecificUtil,
-    IERC20, SafeERC20,
-    IDecimalAggregator
+    IERC20, SafeERC20
 } from "../Common.sol";
 
 /**
@@ -16,9 +15,10 @@ contract Mines is Common {
 
     constructor(
         address _registry,
+        VRFConfig memory vrf,
         uint8[24] memory maxReveal
-    ) {
-        b_registry      = IBankrollRegistry(_registry);
+    ) Common(vrf) {
+        b_registry = IBankrollRegistry(_registry);
 
         _setMaxReveal(maxReveal);
     }
@@ -392,7 +392,7 @@ contract Mines is Common {
         }
     }
 
-    function _fulfillRandomWords(
+    function fulfillRandomWords(
         uint256 requestId,
         uint256[] calldata randomWords
     ) internal override {

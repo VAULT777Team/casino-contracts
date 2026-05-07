@@ -2,10 +2,9 @@
 pragma solidity ^0.8.0;
 
 import {
-    Common, IBankrollRegistry,
+    Common, VRFConfig, IBankrollRegistry,
     ChainSpecificUtil,
-    IERC20, SafeERC20,
-    IDecimalAggregator
+    IERC20, SafeERC20
 } from "../Common.sol";
 
 /**
@@ -15,9 +14,10 @@ contract Blackjack is Common {
     using SafeERC20 for IERC20;
 
     constructor(
-        address _registry
-    ) {
-        b_registry      = IBankrollRegistry(_registry);
+        address _registry,
+        VRFConfig memory vrf
+    ) Common(vrf) {
+        b_registry = IBankrollRegistry(_registry);
     }
 
     struct BlackjackGame {
@@ -25,6 +25,7 @@ contract Blackjack is Common {
         uint256 wager;
         uint256 requestID;
         address tokenAddress;
+        uint256 tokenId;
         uint64 blockNumber;
         uint8[10] playerCards; // max 10 cards
         uint8[10] dealerCards;
@@ -124,7 +125,8 @@ contract Blackjack is Common {
 
     function Blackjack_Start(
         uint256 wager,
-        address tokenAddress
+        address tokenAddress,
+        uint256 tokenId
     ) external payable nonReentrant {
         address msgSender = _msgSender();
         BlackjackGame storage game = blackjackGames[msgSender];
@@ -136,11 +138,13 @@ contract Blackjack is Common {
             revert AlreadyInGame();
         }
 
-        _kellyWager(wager, tokenAddress);
+        _kellyWager(wager, tokenAddress, tokenId);
         _transferWager(
             tokenAddress,
+            tokenId,
             wager,
             600000,
+            20,
             msgSender
         );
 
@@ -149,6 +153,7 @@ contract Blackjack is Common {
         game.baseWager = wager;
         game.wager = wager;
         game.tokenAddress = tokenAddress;
+        game.tokenId = tokenId;
         game.requestID = id;
         game.blockNumber = uint64(ChainSpecificUtil.getBlockNumber());
         game.gameActive = true;
@@ -245,12 +250,14 @@ contract Blackjack is Common {
 
         uint256 additionalWager = game.baseWager;
         uint256 newTotalWager = game.wager + additionalWager;
-        _kellyWager(newTotalWager, game.tokenAddress);
+        _kellyWager(newTotalWager, game.tokenAddress, game.tokenId);
 
         _transferWager(
             game.tokenAddress,
+            game.tokenId,
             additionalWager,
             800000,
+            20,
             msgSender
         );
 
@@ -287,11 +294,11 @@ contract Blackjack is Common {
         address tokenAddress = game.tokenAddress;
         uint256 refund = wager / 2;
 
-        _transferToBankroll(tokenAddress, wager);
+        _transferToBankroll(tokenAddress, game.tokenId, wager);
         delete blackjackGames[msgSender];
 
         if (refund > 0) {
-            _transferPayout(msgSender, refund, tokenAddress);
+            _transferPayout(msgSender, refund, tokenAddress, game.tokenId);
         }
 
         emit Blackjack_Surrender_Event(msgSender, wager, refund, tokenAddress);
@@ -316,19 +323,12 @@ contract Blackjack is Common {
 
         delete blackjackGames[msgSender];
 
-        if (tokenAddress == address(0)) {
-            (bool success, ) = payable(msgSender).call{value: wager}("");
-            if (!success) {
-                revert TransferFailed();
-            }
-        } else {
-            IERC20(tokenAddress).safeTransfer(msgSender, wager);
-        }
-        
+        uint256 tokenId = game.tokenId;
+        _refundPlayer(msgSender, tokenAddress, tokenId, wager);
         emit Blackjack_Refund_Event(msgSender, wager, tokenAddress);
     }
 
-    function _fulfillRandomWords(
+    function fulfillRandomWords(
         uint256 requestId,
         uint256[] calldata randomWords
     ) internal override {
@@ -473,10 +473,10 @@ contract Blackjack is Common {
         uint256 wager = game.wager;
         address tokenAddress = game.tokenAddress;
 
-        _transferToBankroll(tokenAddress, wager);
+        _transferToBankroll(tokenAddress, game.tokenId, wager);
 
         if (payout > 0) {
-            _transferPayout(player, payout, tokenAddress);
+            _transferPayout(player, payout, tokenAddress, game.tokenId);
         }
 
         emit Blackjack_Outcome_Event(
@@ -527,13 +527,10 @@ contract Blackjack is Common {
         return score;
     }
 
-    function _kellyWager(uint256 wager, address tokenAddress) internal view {
-        uint256 balance;
-        if (tokenAddress == address(0)) {
-            balance = address(Bankroll()).balance;
-        } else {
-            balance = IERC20(tokenAddress).balanceOf(address(Bankroll()));
-        }
+    function _kellyWager(uint256 wager, address tokenAddress, uint256 tokenId) internal view {
+        uint256 balance = Bankroll().isERC1155Token(tokenAddress)
+            ? Bankroll().getAvailableBalance(tokenAddress, tokenId)
+            : Bankroll().getAvailableBalance(tokenAddress);
         // conservative kelly for blackjack (~2% house edge)
         uint256 maxWager = (balance * 800000) / 100000000;
         if (wager > maxWager) {

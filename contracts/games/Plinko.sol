@@ -2,10 +2,9 @@
 pragma solidity ^0.8.0;
 
 import {
-    Common, IBankrollRegistry,
+    Common, VRFConfig, IBankrollRegistry,
     ChainSpecificUtil,
-    IERC20, SafeERC20,
-    IDecimalAggregator
+    IERC20, SafeERC20
 } from "../Common.sol";
 
 /**
@@ -15,9 +14,10 @@ contract Plinko is Common {
     using SafeERC20 for IERC20;
 
     constructor(
-        address _registry
-    ) {
-        b_registry      = IBankrollRegistry(_registry);
+        address _registry,
+        VRFConfig memory vrf
+    ) Common(vrf) {
+        b_registry = IBankrollRegistry(_registry);
 
         kellyFractions[0] = [
             573159,
@@ -60,6 +60,7 @@ contract Plinko is Common {
         uint256 stopLoss;
         uint256 requestID;
         address tokenAddress;
+        uint256 tokenId;
         uint64 blockNumber;
         uint32 numBets;
         uint8 risk;
@@ -183,6 +184,7 @@ contract Plinko is Common {
     function Plinko_Play(
         uint256 wager,
         address tokenAddress,
+        uint256 tokenId,
         uint8 numRows,
         uint8 risk,
         uint32 numBets,
@@ -203,11 +205,13 @@ contract Plinko is Common {
             revert InvalidNumBets(100);
         }
 
-        _kellyWager(wager, tokenAddress, numRows, risk);
+        _kellyWager(wager, tokenAddress, tokenId, numRows, risk);
         _transferWager(
             tokenAddress,
+            tokenId,
             wager * numBets,
             1500000,
+            20,
             msgSender
         );
         uint256 id = _requestRandomWords(numBets);
@@ -218,6 +222,7 @@ contract Plinko is Common {
             stopGain: stopGain,
             stopLoss: stopLoss,
             tokenAddress: tokenAddress,
+            tokenId: tokenId,
             blockNumber: uint64(ChainSpecificUtil.getBlockNumber()),
             numBets: numBets,
             risk: risk,
@@ -254,18 +259,12 @@ contract Plinko is Common {
 
         uint256 wager = game.wager * game.numBets;
         address tokenAddress = game.tokenAddress;
+        uint256 tokenId = game.tokenId;
 
         delete (plinkoIDs[game.requestID]);
         delete (plinkoGames[msgSender]);
 
-        if (tokenAddress == address(0)) {
-            (bool success, ) = payable(msgSender).call{value: wager}("");
-            if (!success) {
-                revert TransferFailed();
-            }
-        } else {
-            IERC20(tokenAddress).safeTransfer(msgSender, wager);
-        }
+        _refundPlayer(msgSender, tokenAddress, tokenId, wager);
         emit Plinko_Refund_Event(msgSender, wager, tokenAddress);
     }
 
@@ -280,8 +279,8 @@ contract Plinko is Common {
         uint8 numRows,
         uint8 risk
     ) external {
-        if (msg.sender != owner) {
-            revert NotOwner(owner, msg.sender);
+        if (msg.sender != owner()) {
+            revert NotOwner(owner(), msg.sender);
         }
         if (isMultiplierSet[risk][numRows]) {
             revert MultiplierAlreadySet(numRows, risk);
@@ -303,7 +302,7 @@ contract Plinko is Common {
         isMultiplierSet[risk][numRows] = true;
     }
 
-    function _fulfillRandomWords(
+    function fulfillRandomWords(
         uint256 requestId,
         uint256[] calldata randomWords
     ) internal override {
@@ -353,11 +352,11 @@ contract Plinko is Common {
             payouts,
             i
         );
-        _transferToBankroll(tokenAddress, game.wager * game.numBets);
+        _transferToBankroll(tokenAddress, game.tokenId, game.wager * game.numBets);
         delete (plinkoIDs[requestId]);
         delete (plinkoGames[playerAddress]);
         if (payout != 0) {
-            _transferPayout(playerAddress, payout, tokenAddress);
+            _transferPayout(playerAddress, payout, tokenAddress, game.tokenId);
         }
     }
 
@@ -407,15 +406,13 @@ contract Plinko is Common {
     function _kellyWager(
         uint256 wager,
         address tokenAddress,
+        uint256 tokenId,
         uint8 numRows,
         uint8 risk
     ) internal view {
-        uint256 balance;
-        if (tokenAddress == address(0)) {
-            balance = address(Bankroll()).balance;
-        } else {
-            balance = IERC20(tokenAddress).balanceOf(address(Bankroll()));
-        }
+        uint256 balance = Bankroll().isERC1155Token(tokenAddress)
+            ? Bankroll().getAvailableBalance(tokenAddress, tokenId)
+            : Bankroll().getAvailableBalance(tokenAddress);
         uint256 maxWager = (balance * kellyFractions[risk][numRows - 8]) /
             100000000;
         if (wager > maxWager) {

@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
 import "../contracts/games/VideoPoker.sol";
+import {VRFConfig} from "../contracts/Common.sol";
 
 /**
  * @title VideoPoker Payout Logic Audit Tests
@@ -13,7 +14,15 @@ contract VideoPokerAuditTest is Test {
 
     function setUp() public {
         // Deploy with mock addresses (not needed for pure payout testing)
-        poker = new VideoPoker(address(0x1));
+        VRFConfig memory vrf = VRFConfig({
+            coordinator: address(0x1111),
+            keyHash: bytes32(0),
+            subId: 0,
+            reqConfirmations: 3,
+            callbackGasLimit: 2_000_000,
+            linkEthFeed: address(0x2222)
+        });
+        poker = new VideoPoker(address(0x1), vrf);
     }
 
     // Helper to create cards
