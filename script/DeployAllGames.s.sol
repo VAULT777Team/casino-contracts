@@ -18,12 +18,15 @@ import {EuropeanRoulette} from "../contracts/games/Roulette/EuropeanRoulette.sol
 import {VRFConfig} from "../contracts/Common.sol";
 
 contract DeployAllGames is Script {
+    uint64 internal constant DEFAULT_REFUND_COOLDOWN_BLOCKS = 20;
+
     // Core infrastructure addresses (from .env)
     address BANK_LP;
     address BANKLP_REGISTRY;
     address vrfCoordinator;
     address linkEthFeed;
     address forwarder;
+    uint64 refundCooldownBlocks;
 
     // Deployed game addresses
     address public coinFlip;
@@ -47,6 +50,7 @@ contract DeployAllGames is Script {
         BANKLP_REGISTRY = vm.envAddress("BANKLP_REGISTRY_ADDRESS");
         vrfCoordinator = vm.envAddress("VRF_ADDRESS");
         linkEthFeed = vm.envAddress("LINK_ETH_FEED_ADDRESS");
+        refundCooldownBlocks = uint64(vm.envOr("REFUND_COOLDOWN_BLOCKS", uint256(DEFAULT_REFUND_COOLDOWN_BLOCKS)));
     }
 
     function run() public {
@@ -62,42 +66,42 @@ contract DeployAllGames is Script {
 
         // Deploy games without configs
         console.log("Deploying CoinFlip...");
-        coinFlip = address(new CoinFlip(BANKLP_REGISTRY, vrf));
+        coinFlip = address(new CoinFlip(BANKLP_REGISTRY, vrf, refundCooldownBlocks));
         console.log("CoinFlip deployed to:", coinFlip);
         console.log("");
 
         console.log("Deploying RockPaperScissors...");
-        rockPaperScissors = address(new RockPaperScissors(BANKLP_REGISTRY, vrf));
+        rockPaperScissors = address(new RockPaperScissors(BANKLP_REGISTRY, vrf, refundCooldownBlocks));
         console.log("RockPaperScissors deployed to:", rockPaperScissors);
         console.log("");
 
         console.log("Deploying Dice...");
-        dice = address(new Dice(BANKLP_REGISTRY, vrf));
+        dice = address(new Dice(BANKLP_REGISTRY, vrf, refundCooldownBlocks));
         console.log("Dice deployed to:", dice);
         console.log("");
 
         console.log("Deploying VideoPoker...");
-        videoPoker = address(new VideoPoker(BANKLP_REGISTRY, vrf));
+        videoPoker = address(new VideoPoker(BANKLP_REGISTRY, vrf, refundCooldownBlocks));
         console.log("VideoPoker deployed to:", videoPoker);
         console.log("");
 
         console.log("Deploying Blackjack...");
-        blackjack = address(new Blackjack(BANKLP_REGISTRY, vrf));
+        blackjack = address(new Blackjack(BANKLP_REGISTRY, vrf, refundCooldownBlocks));
         console.log("Blackjack deployed to:", blackjack);
         console.log("");
 
         console.log("Deploying Plinko...");
-        plinko = address(new Plinko(BANKLP_REGISTRY, vrf));
+        plinko = address(new Plinko(BANKLP_REGISTRY, vrf, refundCooldownBlocks));
         console.log("Plinko deployed to:", plinko);
         console.log("");
 
         console.log("Deploying Keno...");
-        keno = address(new Keno(BANKLP_REGISTRY, vrf));
+        keno = address(new Keno(BANKLP_REGISTRY, vrf, refundCooldownBlocks));
         console.log("Keno deployed to:", keno);
         console.log("");
 
         console.log("Deploying FortuneWheel...");
-        fortuneWheel = address(new FortuneWheel(BANKLP_REGISTRY, vrf));
+        fortuneWheel = address(new FortuneWheel(BANKLP_REGISTRY, vrf, refundCooldownBlocks));
         console.log("FortuneWheel deployed to:", fortuneWheel);
         console.log("");
 
@@ -107,12 +111,12 @@ contract DeployAllGames is Script {
         console.log("");
 
         console.log("Deploying AmericanRoulette...");
-        americanRoulette = address(new AmericanRoulette(BANKLP_REGISTRY, vrf));
+        americanRoulette = address(new AmericanRoulette(BANKLP_REGISTRY, vrf, refundCooldownBlocks));
         console.log("AmericanRoulette deployed to:", americanRoulette);
         console.log("");
 
         console.log("Deploying EuropeanRoulette...");
-        europeanRoulette = address(new EuropeanRoulette(BANKLP_REGISTRY, vrf));
+        europeanRoulette = address(new EuropeanRoulette(BANKLP_REGISTRY, vrf, refundCooldownBlocks));
         console.log("EuropeanRoulette deployed to:", europeanRoulette);
         console.log("");
 
@@ -167,6 +171,7 @@ contract DeployAllGames is Script {
         slots = address(new Slots(
             BANKLP_REGISTRY,
             vrf,
+            refundCooldownBlocks,
             slotsMultipliers,
             slotsOutcomes,
             343,
@@ -192,6 +197,7 @@ contract DeployAllGames is Script {
         Slots vaultBonanzaContract = new Slots(
             BANKLP_REGISTRY,
             vrf,
+            refundCooldownBlocks,
             emptyU16,
             emptyU16,
             0,
@@ -243,7 +249,7 @@ contract DeployAllGames is Script {
         minesMaxReveal[16] = 3; minesMaxReveal[17] = 2; minesMaxReveal[18] = 2; minesMaxReveal[19] = 2;
         minesMaxReveal[20] = 2; minesMaxReveal[21] = 1; minesMaxReveal[22] = 1; minesMaxReveal[23] = 1;
         
-        mines = address(new Mines(BANKLP_REGISTRY, vrf, minesMaxReveal));
+        mines = address(new Mines(BANKLP_REGISTRY, vrf, minesMaxReveal, refundCooldownBlocks));
         console.log("Mines deployed to:", mines);
         console.log("");
 

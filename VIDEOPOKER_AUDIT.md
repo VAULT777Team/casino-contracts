@@ -233,8 +233,8 @@ for (uint256 g = 0; g < 5; g++) {
 ```solidity
 function VideoPoker_Refund() external nonReentrant {
     // ...
-    if (game.blockNumber + 200 > uint64(ChainSpecificUtil.getBlockNumber())) {
-        revert BlockNumberTooLow(ChainSpecificUtil.getBlockNumber(), game.blockNumber + 200);
+    if (game.blockNumber + 50 > uint64(ChainSpecificUtil.getBlockNumber())) {
+        revert BlockNumberTooLow(ChainSpecificUtil.getBlockNumber(), game.blockNumber + 50);
     }
     // ...
 }

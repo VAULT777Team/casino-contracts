@@ -47,7 +47,7 @@ contract MockBankroll {
 
 contract VideoPokerHarness is VideoPoker {
     constructor(address _registry, VRFConfig memory vrf)
-        VideoPoker(_registry, vrf)
+        VideoPoker(_registry, vrf, 20)
     {}
 
     function setGameForTest(

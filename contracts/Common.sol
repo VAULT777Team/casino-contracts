@@ -93,6 +93,10 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus, ERC1155Holde
         VRFFees += VRFfee;
     }
 
+    function setCallbackGasLimit(uint32 newLimit) external onlyOwner {
+        callbackGasLimit = newLimit;
+    }
+
     /// @notice Drain accumulated VRF fees to `to`. Callable only by bankroll owner.
     function transferFees(address to) external nonReentrant {
         if (msg.sender != Bankroll().getOwner()) {

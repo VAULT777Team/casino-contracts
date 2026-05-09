@@ -13,12 +13,15 @@ import {
 
 contract CoinFlip is Common {
     using SafeERC20 for IERC20;
+    uint64 public immutable refundCooldownBlocks;
 
     constructor(
         address _registry,
-        VRFConfig memory vrf
+        VRFConfig memory vrf,
+        uint64 _refundCooldownBlocks
     ) Common(vrf) {
         b_registry = IBankrollRegistry(_registry);
+        refundCooldownBlocks = _refundCooldownBlocks;
     }
 
     struct CoinFlipGame {
@@ -127,8 +130,9 @@ contract CoinFlip is Common {
         if (coinFlipGames[msgSender].requestID != 0) {
             revert AwaitingVRF(coinFlipGames[msgSender].requestID);
         }
-        if (!(numBets > 0 && numBets <= 100)) {
-            revert InvalidNumBets(100);
+        uint32 maxNumBets = Bankroll().isERC1155Token(tokenAddress) ? 32 : 100;
+        if (!(numBets > 0 && numBets <= maxNumBets)) {
+            revert InvalidNumBets(maxNumBets);
         }
 
         uint256 maxPayout;
@@ -194,8 +198,8 @@ contract CoinFlip is Common {
         if (game.requestID == 0) {
             revert NotAwaitingVRF();
         }
-        if (game.blockNumber + 200 > uint64(ChainSpecificUtil.getBlockNumber())) {
-            revert BlockNumberTooLow(ChainSpecificUtil.getBlockNumber(), game.blockNumber + 200);
+        if (game.blockNumber + refundCooldownBlocks > uint64(ChainSpecificUtil.getBlockNumber())) {
+            revert BlockNumberTooLow(ChainSpecificUtil.getBlockNumber(), game.blockNumber + refundCooldownBlocks);
         }
 
         uint256 wager = game.wager * game.numBets;
@@ -222,10 +226,11 @@ contract CoinFlip is Common {
         int256 totalValue;
         uint256 payout;
         uint32 i;
-        uint8[] memory coinFlip = new uint8[](game.numBets);
-        uint256[] memory payouts = new uint256[](game.numBets);
+        uint8[] memory coinFlipRaw = new uint8[](game.numBets);
+        uint256[] memory payoutsRaw = new uint256[](game.numBets);
 
         address tokenAddress = game.tokenAddress;
+        uint256 tokenId = game.tokenId;
 
         for (i = 0; i < game.numBets; i++) {
             if (totalValue >= int256(game.stopGain)) {
@@ -235,18 +240,18 @@ contract CoinFlip is Common {
                 break;
             }
 
-            coinFlip[i] = uint8(randomWords[i] % 2);
+            coinFlipRaw[i] = uint8(randomWords[i] % 2);
 
-            if (coinFlip[i] == 1 && game.isHeads == true) {
+            if (coinFlipRaw[i] == 1 && game.isHeads == true) {
                 totalValue += int256((game.wager * 9800) / 10000);
                 payout += (game.wager * 19800) / 10000;
-                payouts[i] = (game.wager * 19800) / 10000;
+                payoutsRaw[i] = (game.wager * 19800) / 10000;
                 continue;
             }
-            if (coinFlip[i] == 0 && game.isHeads == false) {
+            if (coinFlipRaw[i] == 0 && game.isHeads == false) {
                 totalValue += int256((game.wager * 9800) / 10000);
                 payout += (game.wager * 19800) / 10000;
-                payouts[i] = (game.wager * 19800) / 10000;
+                payoutsRaw[i] = (game.wager * 19800) / 10000;
                 continue;
             }
 
@@ -257,6 +262,13 @@ contract CoinFlip is Common {
 
         payout += (game.numBets - i) * game.wager;
 
+        uint8[] memory coinFlip = new uint8[](i);
+        uint256[] memory payouts = new uint256[](i);
+        for (uint32 j = 0; j < i; j++) {
+            coinFlip[j] = coinFlipRaw[j];
+            payouts[j] = payoutsRaw[j];
+        }
+
         emit CoinFlip_Outcome_Event(
             playerAddress,
             game.wager,
@@ -266,11 +278,11 @@ contract CoinFlip is Common {
             payouts,
             i
         );
-        _transferToBankroll(tokenAddress, game.tokenId, game.wager * game.numBets);
+        _transferToBankroll(tokenAddress, tokenId, game.wager * game.numBets);
         delete (coinIDs[requestId]);
         delete (coinFlipGames[playerAddress]);
         if (payout != 0) {
-            _transferPayout(playerAddress, payout, tokenAddress, game.tokenId);
+            _transferPayout(playerAddress, payout, tokenAddress, tokenId);
         }
     }
 

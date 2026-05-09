@@ -13,12 +13,15 @@ import {
 
 contract Dice is Common {
     using SafeERC20 for IERC20;
+    uint64 public immutable refundCooldownBlocks;
 
     constructor(
         address _registry,
-        VRFConfig memory vrf
+        VRFConfig memory vrf,
+        uint64 _refundCooldownBlocks
     ) Common(vrf) {
         b_registry = IBankrollRegistry(_registry);
+        refundCooldownBlocks = _refundCooldownBlocks;
     }
 
     struct DiceGame {
@@ -191,8 +194,8 @@ contract Dice is Common {
         if (game.requestID == 0) {
             revert NotAwaitingVRF();
         }
-        if (game.blockNumber + 200 > uint64(ChainSpecificUtil.getBlockNumber())) {
-            revert BlockNumberTooLow(uint64(ChainSpecificUtil.getBlockNumber()), game.blockNumber + 200);
+        if (game.blockNumber + refundCooldownBlocks > uint64(ChainSpecificUtil.getBlockNumber())) {
+            revert BlockNumberTooLow(uint64(ChainSpecificUtil.getBlockNumber()), game.blockNumber + refundCooldownBlocks);
         }
 
         uint256 wager = game.wager * game.numBets;

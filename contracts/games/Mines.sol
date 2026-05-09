@@ -12,13 +12,16 @@ import {
  */
 contract Mines is Common {
     using SafeERC20 for IERC20;
+    uint64 public immutable refundCooldownBlocks;
 
     constructor(
         address _registry,
         VRFConfig memory vrf,
-        uint8[24] memory maxReveal
+        uint8[24] memory maxReveal,
+        uint64 _refundCooldownBlocks
     ) Common(vrf) {
         b_registry = IBankrollRegistry(_registry);
+        refundCooldownBlocks = _refundCooldownBlocks;
 
         _setMaxReveal(maxReveal);
     }
@@ -349,8 +352,8 @@ contract Mines is Common {
         if (minesGames[msgSender].requestID == 0) {
             revert NoRequestPending();
         }
-        if (game.blockNumber + 200 > uint64(ChainSpecificUtil.getBlockNumber())) {
-            revert BlockNumberTooLow(ChainSpecificUtil.getBlockNumber(), game.blockNumber + 200);
+        if (game.blockNumber + refundCooldownBlocks > uint64(ChainSpecificUtil.getBlockNumber())) {
+            revert BlockNumberTooLow(ChainSpecificUtil.getBlockNumber(), game.blockNumber + refundCooldownBlocks);
         }
 
         uint256 wager = minesGames[msgSender].wager;

@@ -13,6 +13,7 @@ import {
 
 contract Slots is Common {
     using SafeERC20 for IERC20;
+    uint64 public immutable refundCooldownBlocks;
 
     bool public isConfigured;
     bool public isConfiguring;
@@ -25,6 +26,7 @@ contract Slots is Common {
     constructor(
         address _registry,
         VRFConfig memory vrf,
+        uint64 _refundCooldownBlocks,
         uint16[] memory _multipliers,
         uint16[] memory _outcomeNum,
         uint16 _numOutcomes,
@@ -35,6 +37,7 @@ contract Slots is Common {
         uint8 _columnsPerSpin
     ) Common(vrf) {
         b_registry = IBankrollRegistry(_registry);
+        refundCooldownBlocks = _refundCooldownBlocks;
 
         if (_numOutcomes > 0) {
             _setup(
@@ -418,8 +421,8 @@ contract Slots is Common {
             revert NotAwaitingVRF();
         }
 
-        if (game.blockNumber + 200 > uint64(ChainSpecificUtil.getBlockNumber())) {
-            revert BlockNumberTooLow(uint64(ChainSpecificUtil.getBlockNumber()), game.blockNumber + 200);
+        if (game.blockNumber + refundCooldownBlocks > uint64(ChainSpecificUtil.getBlockNumber())) {
+            revert BlockNumberTooLow(uint64(ChainSpecificUtil.getBlockNumber()), game.blockNumber + refundCooldownBlocks);
         }
 
         uint256 wager = game.wager * game.numBets;

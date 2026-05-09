@@ -13,6 +13,7 @@ import {
 
 contract FortuneWheel is Common {
     using SafeERC20 for IERC20;
+    uint64 public immutable refundCooldownBlocks;
 
     uint16 private constant DEFAULT_SEGMENTS = 24;
     uint32 private constant BP = 10_000;
@@ -34,9 +35,11 @@ contract FortuneWheel is Common {
 
     constructor(
         address _registry,
-        VRFConfig memory vrf
+        VRFConfig memory vrf,
+        uint64 _refundCooldownBlocks
     ) Common(vrf) {
         b_registry = IBankrollRegistry(_registry);
+        refundCooldownBlocks = _refundCooldownBlocks;
 
         _initializeDefaultConfigs();
         activeConfigId = LEGACY_CONFIG_ID;
@@ -234,8 +237,8 @@ contract FortuneWheel is Common {
         if (game.requestID == 0) {
             revert NotAwaitingVRF();
         }
-        if (game.blockNumber + 200 > uint64(ChainSpecificUtil.getBlockNumber())) {
-            revert BlockNumberTooLow(ChainSpecificUtil.getBlockNumber(), game.blockNumber + 200);
+        if (game.blockNumber + refundCooldownBlocks > uint64(ChainSpecificUtil.getBlockNumber())) {
+            revert BlockNumberTooLow(ChainSpecificUtil.getBlockNumber(), game.blockNumber + refundCooldownBlocks);
         }
 
         address tokenAddress = game.tokenAddress;

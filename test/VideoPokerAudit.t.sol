@@ -22,7 +22,7 @@ contract VideoPokerAuditTest is Test {
             callbackGasLimit: 2_000_000,
             linkEthFeed: address(0x2222)
         });
-        poker = new VideoPoker(address(0x1), vrf);
+        poker = new VideoPoker(address(0x1), vrf, 20);
     }
 
     // Helper to create cards
