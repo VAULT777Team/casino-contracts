@@ -141,7 +141,6 @@ contract VideoPoker is Common {
         _transferWager(
             tokenAddress,
             wager,
-            500000,
             msgSender
         );
         uint256 id = _requestRandomWords(5);

@@ -28,7 +28,6 @@ contract Blackjack is Common {
         uint256 wager;
         uint256 requestID;
         address tokenAddress;
-        uint256 tokenId;
         uint64 blockNumber;
         uint8[10] playerCards; // max 10 cards
         uint8[10] dealerCards;
@@ -128,8 +127,7 @@ contract Blackjack is Common {
 
     function Blackjack_Start(
         uint256 wager,
-        address tokenAddress,
-        uint256 tokenId
+        address tokenAddress
     ) external payable nonReentrant {
         address msgSender = _msgSender();
         BlackjackGame storage game = blackjackGames[msgSender];
@@ -141,22 +139,14 @@ contract Blackjack is Common {
             revert AlreadyInGame();
         }
 
-        _kellyWager(wager, tokenAddress, tokenId);
-        _transferWager(
-            tokenAddress,
-            tokenId,
-            wager,
-            600000,
-            20,
-            msgSender
-        );
+        _kellyWager(wager, tokenAddress);
+        _transferWager(tokenAddress, wager, msgSender);
 
         uint256 id = _requestRandomWords(3); // 2 player + 1 dealer up-card
 
         game.baseWager = wager;
         game.wager = wager;
         game.tokenAddress = tokenAddress;
-        game.tokenId = tokenId;
         game.requestID = id;
         game.blockNumber = uint64(ChainSpecificUtil.getBlockNumber());
         game.gameActive = true;
@@ -253,16 +243,9 @@ contract Blackjack is Common {
 
         uint256 additionalWager = game.baseWager;
         uint256 newTotalWager = game.wager + additionalWager;
-        _kellyWager(newTotalWager, game.tokenAddress, game.tokenId);
+        _kellyWager(newTotalWager, game.tokenAddress);
 
-        _transferWager(
-            game.tokenAddress,
-            game.tokenId,
-            additionalWager,
-            800000,
-            20,
-            msgSender
-        );
+        _transferWager(game.tokenAddress, additionalWager, msgSender);
 
         uint256 id = _requestRandomWords(10); // 1 player card + up to 9 dealer cards
 
@@ -297,11 +280,11 @@ contract Blackjack is Common {
         address tokenAddress = game.tokenAddress;
         uint256 refund = wager / 2;
 
-        _transferToBankroll(tokenAddress, game.tokenId, wager);
+        _transferToBankroll(tokenAddress, wager);
         delete blackjackGames[msgSender];
 
         if (refund > 0) {
-            _transferPayout(msgSender, refund, tokenAddress, game.tokenId);
+            _transferPayout(msgSender, refund, tokenAddress);
         }
 
         emit Blackjack_Surrender_Event(msgSender, wager, refund, tokenAddress);
@@ -326,8 +309,7 @@ contract Blackjack is Common {
 
         delete blackjackGames[msgSender];
 
-        uint256 tokenId = game.tokenId;
-        _refundPlayer(msgSender, tokenAddress, tokenId, wager);
+        _refundPlayer(msgSender, tokenAddress, wager);
         emit Blackjack_Refund_Event(msgSender, wager, tokenAddress);
     }
 
@@ -476,10 +458,10 @@ contract Blackjack is Common {
         uint256 wager = game.wager;
         address tokenAddress = game.tokenAddress;
 
-        _transferToBankroll(tokenAddress, game.tokenId, wager);
+        _transferToBankroll(tokenAddress, wager);
 
         if (payout > 0) {
-            _transferPayout(player, payout, tokenAddress, game.tokenId);
+            _transferPayout(player, payout, tokenAddress);
         }
 
         emit Blackjack_Outcome_Event(
@@ -530,10 +512,8 @@ contract Blackjack is Common {
         return score;
     }
 
-    function _kellyWager(uint256 wager, address tokenAddress, uint256 tokenId) internal view {
-        uint256 balance = Bankroll().isERC1155Token(tokenAddress)
-            ? Bankroll().getAvailableBalance(tokenAddress, tokenId)
-            : Bankroll().getAvailableBalance(tokenAddress);
+    function _kellyWager(uint256 wager, address tokenAddress) internal view {
+        uint256 balance = Bankroll().getAvailableBalance(tokenAddress);
         // conservative kelly for blackjack (~2% house edge)
         uint256 maxWager = (balance * 800000) / 100000000;
         if (wager > maxWager) {

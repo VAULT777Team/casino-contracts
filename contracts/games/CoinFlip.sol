@@ -30,7 +30,6 @@ contract CoinFlip is Common {
         uint256 stopLoss;
         uint256 requestID;
         address tokenAddress;
-        uint256 tokenId;
         uint64 blockNumber;
         uint32 numBets;
         uint256 maxPayout;
@@ -120,7 +119,6 @@ contract CoinFlip is Common {
     function CoinFlip_Play(
         uint256 wager,
         address tokenAddress,
-        uint256 tokenId,
         bool isHeads,
         uint32 numBets,
         uint256 stopGain,
@@ -130,7 +128,7 @@ contract CoinFlip is Common {
         if (coinFlipGames[msgSender].requestID != 0) {
             revert AwaitingVRF(coinFlipGames[msgSender].requestID);
         }
-        uint32 maxNumBets = Bankroll().isERC1155Token(tokenAddress) ? 32 : 100;
+        uint32 maxNumBets = 100;
         if (!(numBets > 0 && numBets <= maxNumBets)) {
             revert InvalidNumBets(maxNumBets);
         }
@@ -148,15 +146,12 @@ contract CoinFlip is Common {
             maxPayout = (wager * numBets * 19800) / 10000;
         }
 
-        _reserveMaxPayout(tokenAddress, tokenId, maxPayout);
+        _reserveMaxPayout(tokenAddress, maxPayout);
 
-        _kellyWager(wager, tokenAddress, tokenId);
+        _kellyWager(wager, tokenAddress);
         _transferWager(
             tokenAddress,
-            tokenId,
             wager * numBets,
-            700000,
-            20,
             msgSender
         );
 
@@ -168,7 +163,6 @@ contract CoinFlip is Common {
             stopGain: stopGain,
             stopLoss: stopLoss,
             tokenAddress: tokenAddress,
-            tokenId: tokenId,
             blockNumber: uint64(ChainSpecificUtil.getBlockNumber()),
             numBets: numBets,
             maxPayout: maxPayout,
@@ -204,14 +198,13 @@ contract CoinFlip is Common {
 
         uint256 wager = game.wager * game.numBets;
         address tokenAddress = game.tokenAddress;
-        uint256 tokenId = game.tokenId;
 
-        _releaseReserve(tokenAddress, tokenId, game.maxPayout);
+        _releaseReserve(tokenAddress, game.maxPayout);
 
         delete (coinIDs[game.requestID]);
         delete (coinFlipGames[msgSender]);
 
-        _refundPlayer(msgSender, tokenAddress, tokenId, wager);
+        _refundPlayer(msgSender, tokenAddress, wager);
         emit CoinFlip_Refund_Event(msgSender, wager, tokenAddress);
     }
 
@@ -230,7 +223,6 @@ contract CoinFlip is Common {
         uint256[] memory payoutsRaw = new uint256[](game.numBets);
 
         address tokenAddress = game.tokenAddress;
-        uint256 tokenId = game.tokenId;
 
         for (i = 0; i < game.numBets; i++) {
             if (totalValue >= int256(game.stopGain)) {
@@ -258,7 +250,7 @@ contract CoinFlip is Common {
             totalValue -= int256(game.wager);
         }
 
-        _releaseReserve(tokenAddress, game.tokenId, game.maxPayout);
+        _releaseReserve(tokenAddress, game.maxPayout);
 
         payout += (game.numBets - i) * game.wager;
 
@@ -278,11 +270,11 @@ contract CoinFlip is Common {
             payouts,
             i
         );
-        _transferToBankroll(tokenAddress, tokenId, game.wager * game.numBets);
+        _transferToBankroll(tokenAddress, game.wager * game.numBets);
         delete (coinIDs[requestId]);
         delete (coinFlipGames[playerAddress]);
         if (payout != 0) {
-            _transferPayout(playerAddress, payout, tokenAddress, tokenId);
+            _transferPayout(playerAddress, payout, tokenAddress);
         }
     }
 
@@ -290,10 +282,8 @@ contract CoinFlip is Common {
      * @dev calculates the maximum wager allowed based on the bankroll size
      take into account numBets
      */
-    function _kellyWager(uint256 wager, address tokenAddress, uint256 tokenId) internal view {
-        uint256 balance = Bankroll().isERC1155Token(tokenAddress)
-            ? Bankroll().getAvailableBalance(tokenAddress, tokenId)
-            : Bankroll().getAvailableBalance(tokenAddress);
+    function _kellyWager(uint256 wager, address tokenAddress) internal view {
+        uint256 balance = Bankroll().getAvailableBalance(tokenAddress);
         uint256 maxWager = (balance * 1122448) / 100000000;
         if (wager > maxWager) revert WagerAboveLimit(wager, maxWager);
     }

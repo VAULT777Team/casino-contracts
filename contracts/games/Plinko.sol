@@ -63,7 +63,6 @@ contract Plinko is Common {
         uint256 stopLoss;
         uint256 requestID;
         address tokenAddress;
-        uint256 tokenId;
         uint64 blockNumber;
         uint32 numBets;
         uint8 risk;
@@ -187,7 +186,6 @@ contract Plinko is Common {
     function Plinko_Play(
         uint256 wager,
         address tokenAddress,
-        uint256 tokenId,
         uint8 numRows,
         uint8 risk,
         uint32 numBets,
@@ -208,15 +206,8 @@ contract Plinko is Common {
             revert InvalidNumBets(100);
         }
 
-        _kellyWager(wager, tokenAddress, tokenId, numRows, risk);
-        _transferWager(
-            tokenAddress,
-            tokenId,
-            wager * numBets,
-            1500000,
-            20,
-            msgSender
-        );
+        _kellyWager(wager, tokenAddress, numRows, risk);
+        _transferWager(tokenAddress, wager * numBets, msgSender);
         uint256 id = _requestRandomWords(numBets);
 
         plinkoGames[msgSender] = PlinkoGame({
@@ -225,7 +216,6 @@ contract Plinko is Common {
             stopGain: stopGain,
             stopLoss: stopLoss,
             tokenAddress: tokenAddress,
-            tokenId: tokenId,
             blockNumber: uint64(ChainSpecificUtil.getBlockNumber()),
             numBets: numBets,
             risk: risk,
@@ -262,12 +252,10 @@ contract Plinko is Common {
 
         uint256 wager = game.wager * game.numBets;
         address tokenAddress = game.tokenAddress;
-        uint256 tokenId = game.tokenId;
-
         delete (plinkoIDs[game.requestID]);
         delete (plinkoGames[msgSender]);
 
-        _refundPlayer(msgSender, tokenAddress, tokenId, wager);
+        _refundPlayer(msgSender, tokenAddress, wager);
         emit Plinko_Refund_Event(msgSender, wager, tokenAddress);
     }
 
@@ -355,11 +343,11 @@ contract Plinko is Common {
             payouts,
             i
         );
-        _transferToBankroll(tokenAddress, game.tokenId, game.wager * game.numBets);
+        _transferToBankroll(tokenAddress, game.wager * game.numBets);
         delete (plinkoIDs[requestId]);
         delete (plinkoGames[playerAddress]);
         if (payout != 0) {
-            _transferPayout(playerAddress, payout, tokenAddress, game.tokenId);
+            _transferPayout(playerAddress, payout, tokenAddress);
         }
     }
 
@@ -409,13 +397,10 @@ contract Plinko is Common {
     function _kellyWager(
         uint256 wager,
         address tokenAddress,
-        uint256 tokenId,
         uint8 numRows,
         uint8 risk
     ) internal view {
-        uint256 balance = Bankroll().isERC1155Token(tokenAddress)
-            ? Bankroll().getAvailableBalance(tokenAddress, tokenId)
-            : Bankroll().getAvailableBalance(tokenAddress);
+        uint256 balance = Bankroll().getAvailableBalance(tokenAddress);
         uint256 maxWager = (balance * kellyFractions[risk][numRows - 8]) /
             100000000;
         if (wager > maxWager) {

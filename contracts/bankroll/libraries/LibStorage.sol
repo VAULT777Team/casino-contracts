@@ -12,7 +12,6 @@ struct GameStorage {
     address wrappedToken;
     mapping(address => uint256) suspendedTime;
     mapping(address => bool) isPlayerSuspended;
-    mapping(address => bool) isERC1155Token;
 }
 
 library LibStorage {

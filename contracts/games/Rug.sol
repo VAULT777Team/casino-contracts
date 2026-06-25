@@ -135,7 +135,6 @@ contract Rug is Common {
         _transferWager(
             tokenAddress,
             wager * numBets,
-            700000,
             msgSender
         );
 

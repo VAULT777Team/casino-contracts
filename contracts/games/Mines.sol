@@ -229,7 +229,6 @@ contract Mines is Common {
         _transferWager(
             tokenAddress,
             wager,
-            400000,
             msgSender
         );
         uint256 id = _requestRandomWords(numTilesToReveal);

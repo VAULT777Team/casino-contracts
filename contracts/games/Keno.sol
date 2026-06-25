@@ -30,7 +30,6 @@ contract Keno is Common {
         uint256 stopLoss;
         uint256 requestID;
         address tokenAddress;
-        uint256 tokenId;
         uint64 blockNumber;
         uint32 numBets;
         uint8 spotsSelected;
@@ -97,7 +96,6 @@ contract Keno is Common {
     function Keno_Play(
         uint256 wager,
         address tokenAddress,
-        uint256 tokenId,
         uint8 spotsSelected,
         uint8[10] calldata selectedNumbers,
         uint32 numBets,
@@ -129,15 +127,8 @@ contract Keno is Common {
             }
         }
 
-        _kellyWager(wager, tokenAddress, tokenId, spotsSelected);
-        _transferWager(
-            tokenAddress,
-            tokenId,
-            wager * numBets,
-            1000000,
-            20,
-            msgSender
-        );
+        _kellyWager(wager, tokenAddress, spotsSelected);
+        _transferWager(tokenAddress, wager * numBets, msgSender);
 
         uint256 id = _requestRandomWords(numBets);
 
@@ -147,7 +138,6 @@ contract Keno is Common {
         game.stopLoss = stopLoss;
         game.requestID = id;
         game.tokenAddress = tokenAddress;
-        game.tokenId = tokenId;
         game.blockNumber = uint64(ChainSpecificUtil.getBlockNumber());
         game.numBets = numBets;
         game.spotsSelected = spotsSelected;
@@ -184,12 +174,10 @@ contract Keno is Common {
 
         uint256 wager = game.wager * game.numBets;
         address tokenAddress = game.tokenAddress;
-        uint256 tokenId = game.tokenId;
-
         delete kenoIDs[game.requestID];
         delete kenoGames[msgSender];
 
-        _refundPlayer(msgSender, tokenAddress, tokenId, wager);
+        _refundPlayer(msgSender, tokenAddress, wager);
         emit Keno_Refund_Event(msgSender, wager, tokenAddress);
     }
 
@@ -248,11 +236,11 @@ contract Keno is Common {
             i
         );
         
-        _transferToBankroll(tokenAddress, game.tokenId, game.wager * game.numBets);
+        _transferToBankroll(tokenAddress, game.wager * game.numBets);
         delete kenoIDs[requestId];
         delete kenoGames[playerAddress];
         if (payout != 0) {
-            _transferPayout(playerAddress, payout, tokenAddress, game.tokenId);
+            _transferPayout(playerAddress, payout, tokenAddress);
         }
     }
 
@@ -351,10 +339,8 @@ contract Keno is Common {
         kenoMultipliers[10][10] = 10000000; // 100000x
     }
 
-    function _kellyWager(uint256 wager, address tokenAddress, uint256 tokenId, uint8 spots) internal view {
-        uint256 balance = Bankroll().isERC1155Token(tokenAddress)
-            ? Bankroll().getAvailableBalance(tokenAddress, tokenId)
-            : Bankroll().getAvailableBalance(tokenAddress);
+    function _kellyWager(uint256 wager, address tokenAddress, uint8 spots) internal view {
+        uint256 balance = Bankroll().getAvailableBalance(tokenAddress);
         
         // conservative kelly for keno (high variance game)
         uint256 kellyFraction;

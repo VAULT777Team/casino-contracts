@@ -3,18 +3,13 @@ pragma solidity ^0.8.0;
 
 import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import {ERC1155} from "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
 
 import {BankLP} from "./facets/BankLP.sol";   // your existing BankLP
-import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 
-contract BonusClaimToken is ERC1155, Ownable {
-    using Strings for uint256;
-
-    string public name;
-    string public symbol;
+contract BonusClaimToken is ERC20, Ownable {
     address public minter;
     bool public transfersRestricted = true;
     mapping(address => bool) public allowedTransferTarget;
@@ -22,56 +17,12 @@ contract BonusClaimToken is ERC1155, Ownable {
     uint256 public nextTokenId = 1;
     mapping(address => uint256) public tokenToId;
     mapping(uint256 => address) public idToToken;
-    mapping(address => uint256) public totalBalance;
-    string private _baseMetadataURI;
-    string private _metadataSuffix = ".json";
-
     event TransfersRestrictedUpdated(bool restricted);
     event AllowedTransferTargetUpdated(address indexed target, bool allowed);
     event ClaimTokenIdAssigned(address indexed underlyingToken, uint256 indexed tokenId);
-    event MetadataConfigUpdated(string baseUri, string suffix);
 
-    constructor(string memory _name, string memory _symbol, address _minter) ERC1155("") {
-        name = _name;
-        symbol = _symbol;
+    constructor(string memory _name, string memory _symbol, address _minter) ERC20(_name, _symbol) {
         minter = _minter;
-    }
-
-    function setURI(string calldata newUri) external onlyOwner {
-        _baseMetadataURI = newUri;
-        emit MetadataConfigUpdated(_baseMetadataURI, _metadataSuffix);
-    }
-
-    function setMetadataConfig(string calldata newBaseUri, string calldata newSuffix) external onlyOwner {
-        _baseMetadataURI = newBaseUri;
-        _metadataSuffix = newSuffix;
-        emit MetadataConfigUpdated(_baseMetadataURI, _metadataSuffix);
-    }
-
-    function metadataBaseURI() external view returns (string memory) {
-        return _baseMetadataURI;
-    }
-
-    function metadataSuffix() external view returns (string memory) {
-        return _metadataSuffix;
-    }
-
-    function uri(uint256 id) public view override returns (string memory) {
-        if (bytes(_baseMetadataURI).length == 0) {
-            return string(abi.encodePacked("ipfs://bonus-claim/", id.toString(), ".json"));
-        }
-
-        return string(
-            abi.encodePacked(
-                _normalizedBaseUri(_baseMetadataURI),
-                block.chainid.toString(),
-                "/",
-                Strings.toHexString(uint160(address(this)), 20),
-                "/",
-                id.toString(),
-                _metadataSuffix
-            )
-        );
     }
 
     function tokenIdFor(address underlyingToken) external view returns (uint256) {
@@ -82,33 +33,28 @@ contract BonusClaimToken is ERC1155, Ownable {
         return idToToken[id];
     }
 
-    function decimals() external pure returns (uint8) {
+    function decimals() public pure override returns (uint8) {
         return 18;
-    }
-
-    // Compatibility helper for existing integrations that query claim balance as a single scalar.
-    function balanceOf(address account) external view returns (uint256) {
-        return totalBalance[account];
     }
 
     function balanceOfToken(address account, address underlyingToken) external view returns (uint256) {
         uint256 id = tokenToId[underlyingToken];
         if (id == 0) return 0;
-        return super.balanceOf(account, id);
+        return super.balanceOf(account);
     }
 
     function mint(address to, address underlyingToken, uint256 amount) external {
         require(msg.sender == minter, "Only minter");
         require(to != address(0), "Invalid recipient");
-        uint256 id = _ensureTokenId(underlyingToken);
-        _mint(to, id, amount, "");
+        _ensureTokenId(underlyingToken);
+        _mint(to, amount);
     }
 
     function burnFrom(address account, address underlyingToken, uint256 amount) external {
         require(msg.sender == minter, "Only minter");
         uint256 id = tokenToId[underlyingToken];
         require(id != 0, "Token ID not found");
-        _burn(account, id, amount);
+        _burn(account, amount);
     }
 
     function setMinter(address newMinter) external onlyOwner {
@@ -126,54 +72,19 @@ contract BonusClaimToken is ERC1155, Ownable {
         emit AllowedTransferTargetUpdated(target, allowed);
     }
 
-    function _beforeTokenTransfer(
-        address operator,
-        address from,
-        address to,
-        uint256[] memory ids,
-        uint256[] memory amounts,
-        bytes memory data
-    ) internal override {
-        super._beforeTokenTransfer(operator, from, to, ids, amounts, data);
+    function _beforeTokenTransfer(address from, address to, uint256 amount) internal override {
+        super._beforeTokenTransfer(from, to, amount);
 
-        uint256 sumAmount = 0;
-        for (uint256 i = 0; i < amounts.length; i++) {
-            sumAmount += amounts[i];
-        }
-
-        if (!transfersRestricted || sumAmount == 0) {
+        if (!transfersRestricted || amount == 0) {
             return;
         }
 
         bool isMintOrBurn = from == address(0) || to == address(0);
-        bool involvesMinter = operator == minter || from == minter || to == minter;
+        bool involvesMinter = _msgSender() == minter || from == minter || to == minter;
         bool toAllowed = allowedTransferTarget[to];
         bool fromAllowed = allowedTransferTarget[from];
 
         require(isMintOrBurn || involvesMinter || toAllowed || fromAllowed, "Transfers restricted");
-    }
-
-    function _afterTokenTransfer(
-        address operator,
-        address from,
-        address to,
-        uint256[] memory ids,
-        uint256[] memory amounts,
-        bytes memory data
-    ) internal override {
-        super._afterTokenTransfer(operator, from, to, ids, amounts, data);
-
-        uint256 sumAmount = 0;
-        for (uint256 i = 0; i < amounts.length; i++) {
-            sumAmount += amounts[i];
-        }
-
-        if (from != address(0)) {
-            totalBalance[from] -= sumAmount;
-        }
-        if (to != address(0)) {
-            totalBalance[to] += sumAmount;
-        }
     }
 
     function _ensureTokenId(address underlyingToken) internal returns (uint256 id) {
@@ -188,16 +99,6 @@ contract BonusClaimToken is ERC1155, Ownable {
 
         emit ClaimTokenIdAssigned(underlyingToken, id);
     }
-
-    function _normalizedBaseUri(string memory baseUri) internal pure returns (string memory) {
-        bytes memory b = bytes(baseUri);
-        if (b.length == 0) return "";
-        if (b[b.length - 1] == bytes1("/")) {
-            return baseUri;
-        }
-        return string(abi.encodePacked(baseUri, "/"));
-    }
-
 }
 
 
@@ -288,7 +189,7 @@ contract BonusVault is Ownable {
     }
 
     /**
-     * @notice Player deposits from one wallet and mints claim to another wallet (e.g. OCG embedded wallet)
+     * @notice Player deposits from one wallet and mints claim to another wallet (e.g. embedded wallet)
      */
     function depositForBonusTo(address token, uint256 depositAmount, address claimRecipient) external payable {
         _depositForBonus(token, depositAmount, claimRecipient);

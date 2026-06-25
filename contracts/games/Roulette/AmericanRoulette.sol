@@ -159,7 +159,6 @@ contract AmericanRoulette is Common {
         _transferWager(
             tokenAddress,
             totalWager,
-            900000,
             msgSender
         );
 

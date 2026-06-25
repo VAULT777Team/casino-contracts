@@ -30,7 +30,6 @@ contract Dice is Common {
         uint256 stopLoss;
         uint256 requestID;
         address tokenAddress;
-        uint256 tokenId;
         uint64 blockNumber;
         uint32 numBets;
         uint32 multiplier;
@@ -128,7 +127,6 @@ contract Dice is Common {
         uint256 wager,
         uint32 multiplier,
         address tokenAddress,
-        uint256 tokenId,
         bool isOver,
         uint32 numBets,
         uint256 stopGain,
@@ -145,15 +143,8 @@ contract Dice is Common {
             revert InvalidNumBets(100);
         }
 
-        _kellyWager(wager, tokenAddress, tokenId, multiplier);
-        _transferWager(
-            tokenAddress,
-            tokenId,
-            wager * numBets,
-            700000,
-            20,
-            msgSender
-        );
+        _kellyWager(wager, tokenAddress, multiplier);
+        _transferWager(tokenAddress, wager * numBets, msgSender);
 
         uint256 id = _requestRandomWords(numBets);
 
@@ -163,7 +154,6 @@ contract Dice is Common {
             stopGain: stopGain,
             stopLoss: stopLoss,
             tokenAddress: tokenAddress,
-            tokenId: tokenId,
             blockNumber: uint64(ChainSpecificUtil.getBlockNumber()),
             numBets: numBets,
             multiplier: multiplier,
@@ -200,12 +190,10 @@ contract Dice is Common {
 
         uint256 wager = game.wager * game.numBets;
         address tokenAddress = game.tokenAddress;
-        uint256 tokenId = game.tokenId;
-
         delete (diceIDs[game.requestID]);
         delete (diceGames[msgSender]);
 
-        _refundPlayer(msgSender, tokenAddress, tokenId, wager);
+        _refundPlayer(msgSender, tokenAddress, wager);
         emit Dice_Refund_Event(msgSender, wager, tokenAddress);
     }
 
@@ -268,11 +256,11 @@ contract Dice is Common {
             payouts,
             i
         );
-        _transferToBankroll(tokenAddress, game.tokenId, game.wager * game.numBets);
+        _transferToBankroll(tokenAddress, game.wager * game.numBets);
         delete (diceIDs[requestId]);
         delete (diceGames[playerAddress]);
         if (payout != 0) {
-            _transferPayout(playerAddress, payout, tokenAddress, game.tokenId);
+            _transferPayout(playerAddress, payout, tokenAddress);
         }
     }
 
@@ -282,12 +270,9 @@ contract Dice is Common {
     function _kellyWager(
         uint256 wager,
         address tokenAddress,
-        uint256 tokenId,
         uint256 multiplier
     ) internal view {
-        uint256 balance = Bankroll().isERC1155Token(tokenAddress)
-            ? Bankroll().getAvailableBalance(tokenAddress, tokenId)
-            : Bankroll().getAvailableBalance(tokenAddress);
+        uint256 balance = Bankroll().getAvailableBalance(tokenAddress);
         uint256 maxWager = (balance * (11000 - 10890)) / (multiplier - 10000);
         if (wager > maxWager) revert WagerAboveLimit(wager, maxWager);
     }

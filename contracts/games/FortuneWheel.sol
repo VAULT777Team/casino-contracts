@@ -49,7 +49,6 @@ contract FortuneWheel is Common {
         uint256 wager; // wager per bet
         uint256 requestID;
         address tokenAddress;
-        uint256 tokenId;
         uint64 blockNumber;
         uint32 numBets;
         uint256 totalWager;
@@ -155,17 +154,15 @@ contract FortuneWheel is Common {
     function FortuneWheel_Play(
         uint256 wager,
         address tokenAddress,
-        uint256 tokenId,
         uint32 numBets,
         uint8 configId
     ) external payable nonReentrant {
-        _play(wager, tokenAddress, tokenId, numBets, configId);
+        _play(wager, tokenAddress, numBets, configId);
     }
 
     function _play(
         uint256 wager,
         address tokenAddress,
-        uint256 tokenId,
         uint32 numBets,
         uint8 configId
     ) internal {
@@ -188,19 +185,10 @@ contract FortuneWheel is Common {
         uint256 maxPayoutPerBet = (wager * config.maxMultiplierBp) / BP;
         uint256 maxPayoutTotal = maxPayoutPerBet * uint256(numBets);
 
-        _kellyWager(wager, maxPayoutPerBet, tokenAddress, tokenId, configId);
+        _kellyWager(wager, maxPayoutPerBet, tokenAddress, configId);
 
-        _reserveMaxPayout(tokenAddress, tokenId, maxPayoutTotal);
-        // Scale the VRF callback gas estimate with number of bets.
-        uint256 gasAmount = 700000 + (uint256(numBets) * 45000);
-        _transferWager(
-            tokenAddress,
-            tokenId,
-            totalWager,
-            gasAmount,
-            20,
-            msgSender
-        );
+        _reserveMaxPayout(tokenAddress, maxPayoutTotal);
+        _transferWager(tokenAddress, totalWager, msgSender);
 
         uint256 id = _requestRandomWords(numBets);
 
@@ -208,7 +196,6 @@ contract FortuneWheel is Common {
             requestID: id,
             wager: wager,
             tokenAddress: tokenAddress,
-            tokenId: tokenId,
             blockNumber: uint64(ChainSpecificUtil.getBlockNumber()),
             numBets: numBets,
             totalWager: totalWager,
@@ -245,12 +232,12 @@ contract FortuneWheel is Common {
 
         uint256 totalWager = game.totalWager;
 
-        _releaseReserve(tokenAddress, game.tokenId, game.maxPayout);
+        _releaseReserve(tokenAddress, game.maxPayout);
 
         delete (fortuneWheelIDs[game.requestID]);
         delete (fortuneWheelGames[msgSender]);
 
-        _refundPlayer(msgSender, tokenAddress, game.tokenId, totalWager);
+        _refundPlayer(msgSender, tokenAddress, totalWager);
         emit FortuneWheel_Refund_Event(msgSender, totalWager, tokenAddress);
     }
 
@@ -295,14 +282,14 @@ contract FortuneWheel is Common {
             bonusSpins[i] = bonusSpinCount;
         }
 
-        _releaseReserve(tokenAddress, game.tokenId, game.maxPayout);
+        _releaseReserve(tokenAddress, game.maxPayout);
 
-        _transferToBankroll(tokenAddress, game.tokenId, game.totalWager);
+        _transferToBankroll(tokenAddress, game.totalWager);
         delete (fortuneWheelIDs[requestId]);
         delete (fortuneWheelGames[playerAddress]);
 
         if (totalPayout != 0) {
-            _transferPayout(playerAddress, totalPayout, tokenAddress, game.tokenId);
+            _transferPayout(playerAddress, totalPayout, tokenAddress);
         }
 
         emit FortuneWheel_Outcome_Event(
@@ -625,12 +612,9 @@ contract FortuneWheel is Common {
         uint256 wagerPerBet,
         uint256 maxPayoutPerBet,
         address tokenAddress,
-        uint256 tokenId,
         uint8 configId
     ) internal view {
-        uint256 balance = Bankroll().isERC1155Token(tokenAddress)
-            ? Bankroll().getAvailableBalance(tokenAddress, tokenId)
-            : Bankroll().getAvailableBalance(tokenAddress);
+        uint256 balance = Bankroll().getAvailableBalance(tokenAddress);
         uint256 maxWager = (balance * KELLY_LIMIT_BP) / BP;
 
         // Legacy profile caps wager-per-bet, while high-variance-style profiles

@@ -130,7 +130,6 @@ contract EuropeanRoulette is Common {
         _transferWager(
             tokenAddress,
             wager * numBets,
-            900000,
             msgSender
         );
 

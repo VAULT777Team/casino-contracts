@@ -383,7 +383,6 @@ contract Slots is Common {
         _transferWager(
             tokenAddress,
             wager * numBets,
-            800000,
             msgSender
         );
         uint256 id = _requestRandomWords(numBets);
