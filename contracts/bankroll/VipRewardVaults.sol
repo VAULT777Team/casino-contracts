@@ -12,12 +12,14 @@ function _singleActionArray(bytes32 action) pure returns (bytes32[] memory actio
 }
 
 function _sharedVipClaimActions() pure returns (bytes32[] memory actions) {
-    actions = new bytes32[](5);
-    actions[0] = keccak256(bytes("VIP_WEEKLY_CLAIM"));
-    actions[1] = keccak256(bytes("VIP_RELOAD_CLAIM"));
-    actions[2] = keccak256(bytes("VIP_RAKEBACK_CLAIM"));
-    actions[3] = keccak256(bytes("VIP_RANK_UP_BONUS_CLAIM"));
-    actions[4] = keccak256(bytes("REFERRAL_REWARD_CLAIM"));
+    actions = new bytes32[](7);
+    actions[0] = keccak256(bytes("VIP_DAILY_CLAIM"));
+    actions[1] = keccak256(bytes("VIP_WEEKLY_CLAIM"));
+    actions[2] = keccak256(bytes("VIP_MONTHLY_CLAIM"));
+    actions[3] = keccak256(bytes("VIP_RELOAD_CLAIM"));
+    actions[4] = keccak256(bytes("VIP_RAKEBACK_CLAIM"));
+    actions[5] = keccak256(bytes("VIP_RANK_UP_BONUS_CLAIM"));
+    actions[6] = keccak256(bytes("REFERRAL_REWARD_CLAIM"));
 }
 
 contract VipRewardVault is Ownable {
