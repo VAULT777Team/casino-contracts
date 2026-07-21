@@ -6,9 +6,11 @@ node_modules/*
 # sensitive environment files
 .env
 .env.arb-*
+.env*
 
 # foundry
 
 artifacts/*
 cache/
 broadcast/
+node_modules
