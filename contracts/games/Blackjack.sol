@@ -142,7 +142,12 @@ contract Blackjack is Common {
         _kellyWager(wager, tokenAddress);
         _transferWager(tokenAddress, wager, msgSender);
 
-        uint256 id = _requestRandomWords(3); // 2 player + 1 dealer up-card
+        (uint256 id, uint256 vrfFee) = _requestRandomWords(
+            3,
+            tokenAddress,
+            msgSender,
+            wager
+        ); // 2 player + 1 dealer up-card
 
         game.baseWager = wager;
         game.wager = wager;
@@ -170,7 +175,7 @@ contract Blackjack is Common {
             [0, 0], // will be filled after VRF
             0,
             0,
-            0
+            vrfFee
         );
     }
 
@@ -188,13 +193,18 @@ contract Blackjack is Common {
             revert PlayerAlreadyStood();
         }
 
-        uint256 id = _requestRandomWords(1);
+        (uint256 id, uint256 vrfFee) = _requestRandomWords(
+            1,
+            game.tokenAddress,
+            msgSender,
+            0
+        );
 
         game.requestID = id;
         game.blockNumber = uint64(ChainSpecificUtil.getBlockNumber());
         blackjackIDs[id] = msgSender;
 
-        emit Blackjack_Hit_Event(msgSender, 0, 0, false, 0);
+        emit Blackjack_Hit_Event(msgSender, 0, 0, false, vrfFee);
     }
 
     function Blackjack_Stand() external payable nonReentrant {
@@ -212,13 +222,18 @@ contract Blackjack is Common {
 
         // Resolve dealer draw using VRF so the outcome can't be computed and reverted
         // within the same transaction.
-        uint256 id = _requestRandomWords(9); // dealer can draw up to 9 more cards (10 max, 1 already dealt)
+        (uint256 id, uint256 vrfFee) = _requestRandomWords(
+            9,
+            game.tokenAddress,
+            msgSender,
+            0
+        ); // dealer can draw up to 9 more cards (10 max, 1 already dealt)
 
         game.requestID = id;
         game.blockNumber = uint64(ChainSpecificUtil.getBlockNumber());
         blackjackIDs[id] = msgSender;
 
-        emit Blackjack_Stand_Event(msgSender, id, 0);
+        emit Blackjack_Stand_Event(msgSender, id, vrfFee);
     }
 
     function Blackjack_DoubleDown() external payable nonReentrant {
@@ -247,7 +262,12 @@ contract Blackjack is Common {
 
         _transferWager(game.tokenAddress, additionalWager, msgSender);
 
-        uint256 id = _requestRandomWords(10); // 1 player card + up to 9 dealer cards
+        (uint256 id, uint256 vrfFee) = _requestRandomWords(
+            10,
+            game.tokenAddress,
+            msgSender,
+            additionalWager
+        ); // 1 player card + up to 9 dealer cards
 
         game.wager = newTotalWager;
         game.doubledDown = true;
@@ -256,7 +276,7 @@ contract Blackjack is Common {
         game.blockNumber = uint64(ChainSpecificUtil.getBlockNumber());
         blackjackIDs[id] = msgSender;
 
-        emit Blackjack_DoubleDown_Event(msgSender, additionalWager, newTotalWager, id, 0);
+        emit Blackjack_DoubleDown_Event(msgSender, additionalWager, newTotalWager, id, vrfFee);
     }
 
     function Blackjack_Surrender() external nonReentrant {

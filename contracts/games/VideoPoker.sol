@@ -143,7 +143,12 @@ contract VideoPoker is Common {
             wager,
             msgSender
         );
-        uint256 id = _requestRandomWords(5);
+        (uint256 id, uint256 vrfFee) = _requestRandomWords(
+            5,
+            tokenAddress,
+            msgSender,
+            wager
+        );
 
         videoPokerIDs[id] = msgSender;
         game.tokenAddress = tokenAddress;
@@ -153,7 +158,7 @@ contract VideoPoker is Common {
         game.blockNumber = uint64(ChainSpecificUtil.getBlockNumber());
         game.ingame = true;
 
-        emit VideoPoker_Play_Event(msgSender, wager, tokenAddress, 0);
+        emit VideoPoker_Play_Event(msgSender, wager, tokenAddress, vrfFee);
     }
 
     /**
@@ -181,12 +186,17 @@ contract VideoPoker is Common {
         }
 
         if (replaceCards) {
-            uint256 id = _requestRandomWords(5);
+            (uint256 id, uint256 vrfFee) = _requestRandomWords(
+                5,
+                game.tokenAddress,
+                msgSender,
+                0
+            );
             videoPokerIDs[id] = msgSender;
             game.toReplace = toReplace;
             game.requestID = id;
             game.blockNumber = uint64(ChainSpecificUtil.getBlockNumber());
-            emit VideoPoker_Fee_Event(msgSender, 0);
+            emit VideoPoker_Fee_Event(msgSender, vrfFee);
         } else {
             if (msg.value != 0) {
                 revert NoFeeRequired();

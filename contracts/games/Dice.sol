@@ -146,7 +146,12 @@ contract Dice is Common {
         _kellyWager(wager, tokenAddress, multiplier);
         _transferWager(tokenAddress, wager * numBets, msgSender);
 
-        uint256 id = _requestRandomWords(numBets);
+        (uint256 id, uint256 vrfFee) = _requestRandomWords(
+            numBets,
+            tokenAddress,
+            msgSender,
+            wager * numBets
+        );
 
         diceGames[msgSender] = DiceGame({
             requestID: id,
@@ -171,7 +176,7 @@ contract Dice is Common {
             numBets,
             stopGain,
             stopLoss,
-            0
+            vrfFee
         );
     }
 

@@ -133,7 +133,12 @@ contract EuropeanRoulette is Common {
             msgSender
         );
 
-        uint256 requestID = _requestRandomWords(numBets);
+        (uint256 requestID, uint256 vrfFee) = _requestRandomWords(
+            numBets,
+            tokenAddress,
+            msgSender,
+            wager * numBets
+        );
 
         rouletteGames[msgSender] = RouletteGame({
             requestID: requestID,
@@ -158,7 +163,7 @@ contract EuropeanRoulette is Common {
             numBets,
             stopGain,
             stopLoss,
-            0
+            vrfFee
         );
     }
 

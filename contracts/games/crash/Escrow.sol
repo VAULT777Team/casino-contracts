@@ -427,10 +427,10 @@ contract Escrow is Common, EIP712 {
             if (msg.value < wager) {
                 revert InvalidValue(wager, msg.value);
             }
-            _refundExcessValue(msg.value - wager);
+            _refundExcessValue(msgSender, msg.value - wager);
         } else {
             IERC20(tokenAddress).safeTransferFrom(msgSender, address(this), wager);
-            _refundExcessValue(msg.value);
+            _refundExcessValue(msgSender, msg.value);
         }
 
         uint256 playReward = Bankroll().getPlayerReward();

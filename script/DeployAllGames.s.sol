@@ -24,7 +24,7 @@ contract DeployAllGames is Script {
     address BANK_LP;
     address BANKLP_REGISTRY;
     address vrfCoordinator;
-    address linkEthFeed;
+    address vrfFeeManager;
     address forwarder;
     uint64 refundCooldownBlocks;
 
@@ -49,7 +49,7 @@ contract DeployAllGames is Script {
         BANK_LP = vm.envAddress("BANKLP_ADDRESS");
         BANKLP_REGISTRY = vm.envAddress("BANKLP_REGISTRY_ADDRESS");
         vrfCoordinator = vm.envAddress("VRF_ADDRESS");
-        linkEthFeed = vm.envAddress("LINK_ETH_FEED_ADDRESS");
+        vrfFeeManager = vm.envAddress("VRF_FEE_MANAGER_ADDRESS");
         refundCooldownBlocks = uint64(vm.envOr("REFUND_COOLDOWN_BLOCKS", uint256(DEFAULT_REFUND_COOLDOWN_BLOCKS)));
     }
 
@@ -264,7 +264,7 @@ contract DeployAllGames is Script {
         console.log("  BankLP:            ", BANK_LP);
         console.log("  BankLP Registry:   ", BANKLP_REGISTRY);
         console.log("  VRF:               ", vrfCoordinator);
-        console.log("  LINK/ETH Feed:     ", linkEthFeed);
+        console.log("  VRF Fee Manager:   ", vrfFeeManager);
         console.log("  Forwarder:         ", forwarder);
         console.log("");
         console.log("Game Contracts:");
@@ -295,7 +295,7 @@ contract DeployAllGames is Script {
             subId: vm.envUint("VRF_SUBSCRIPTION_ID"),
             reqConfirmations: uint16(vm.envUint("VRF_MIN_CONFIRMATIONS")),
             callbackGasLimit: uint32(vm.envUint("VRF_CALLBACK_GAS_LIMIT")),
-            linkEthFeed: linkEthFeed
+            feeManager: vrfFeeManager
         });
     }
 

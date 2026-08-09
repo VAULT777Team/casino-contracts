@@ -16,8 +16,9 @@ interface ISubscriptionManager {
 
 
 interface IGame {
-    function VRFFees() external view returns (uint256);
+    function VRFFees(address token) external view returns (uint256);
     function transferFees(
+        address token,
         address to
     ) external;
 }
@@ -76,43 +77,43 @@ contract ActivateGames is Script {
 
         uint256 totalFees = 0;
         
-        totalFees += IGame(coinflip).VRFFees();
-        totalFees += IGame(dice).VRFFees();
-        totalFees += IGame(videoPoker).VRFFees();
-        totalFees += IGame(blackjack).VRFFees();
-        totalFees += IGame(plinko).VRFFees();
-        totalFees += IGame(keno).VRFFees();
-        totalFees += IGame(slots).VRFFees();
-        totalFees += IGame(mines).VRFFees();
-        totalFees += IGame(rockPaperScissors).VRFFees();
-        totalFees += IGame(fortuneWheel).VRFFees();
-        totalFees += IGame(lottery).VRFFees();
-        totalFees += IGame(americanRoulette).VRFFees();
-        totalFees += IGame(europeanRoulette).VRFFees(); 
+        totalFees += IGame(coinflip).VRFFees(address(0));
+        totalFees += IGame(dice).VRFFees(address(0));
+        totalFees += IGame(videoPoker).VRFFees(address(0));
+        totalFees += IGame(blackjack).VRFFees(address(0));
+        totalFees += IGame(plinko).VRFFees(address(0));
+        totalFees += IGame(keno).VRFFees(address(0));
+        totalFees += IGame(slots).VRFFees(address(0));
+        totalFees += IGame(mines).VRFFees(address(0));
+        totalFees += IGame(rockPaperScissors).VRFFees(address(0));
+        totalFees += IGame(fortuneWheel).VRFFees(address(0));
+        totalFees += IGame(lottery).VRFFees(address(0));
+        totalFees += IGame(americanRoulette).VRFFees(address(0));
+        totalFees += IGame(europeanRoulette).VRFFees(address(0));
 
         console.log("Total VRF Fees combined on all games:", totalFees);
-        IGame(coinflip).transferFees(address(msg.sender));
+        IGame(coinflip).transferFees(address(0), address(msg.sender));
         console.log("Transferred fees CoinFlip:", coinflip);
 
-        IGame(dice).transferFees(address(msg.sender));
+        IGame(dice).transferFees(address(0), address(msg.sender));
         console.log("Transferred fees Dice:", dice);
 
-        IGame(videoPoker).transferFees(address(msg.sender));
+        IGame(videoPoker).transferFees(address(0), address(msg.sender));
         console.log("Transferred fees VideoPoker:", videoPoker);
 
-        IGame(blackjack).transferFees(address(msg.sender));
+        IGame(blackjack).transferFees(address(0), address(msg.sender));
         console.log("Transferred fees Blackjack:", blackjack);
 
-        IGame(plinko).transferFees(address(msg.sender));
+        IGame(plinko).transferFees(address(0), address(msg.sender));
         console.log("Transferred fees Plinko:", plinko);
 
-        IGame(slots).transferFees(address(msg.sender));
+        IGame(slots).transferFees(address(0), address(msg.sender));
         console.log("Transferred fees Slots:", slots);
 
-        IGame(rockPaperScissors).transferFees(address(msg.sender));
+        IGame(rockPaperScissors).transferFees(address(0), address(msg.sender));
         console.log("Transferred fees RockPaperScissors:", rockPaperScissors);
 
-        IGame(fortuneWheel).transferFees(address(msg.sender));
+        IGame(fortuneWheel).transferFees(address(0), address(msg.sender));
         console.log("Transferred fees FortuneWheel:", fortuneWheel);
 
         //IBankLP(BANK_LP).setGame(lottery, true);
@@ -125,10 +126,10 @@ contract ActivateGames is Script {
         console.log("========================================");
         console.log("");
 
-        IGame(americanRoulette).transferFees(address(msg.sender));
+        IGame(americanRoulette).transferFees(address(0), address(msg.sender));
         console.log("Transferred fees AmericanRoulette:", americanRoulette);
         
-        IGame(europeanRoulette).transferFees(address(msg.sender));
+        IGame(europeanRoulette).transferFees(address(0), address(msg.sender));
         console.log("Transferred fees EuropeanRoulette:", europeanRoulette);
         
         console.log("");

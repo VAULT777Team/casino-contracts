@@ -130,7 +130,12 @@ contract Keno is Common {
         _kellyWager(wager, tokenAddress, spotsSelected);
         _transferWager(tokenAddress, wager * numBets, msgSender);
 
-        uint256 id = _requestRandomWords(numBets);
+        (uint256 id, uint256 vrfFee) = _requestRandomWords(
+            numBets,
+            tokenAddress,
+            msgSender,
+            wager * numBets
+        );
 
         KenoGame storage game = kenoGames[msgSender];
         game.wager = wager;
@@ -157,7 +162,7 @@ contract Keno is Common {
             numBets,
             stopGain,
             stopLoss,
-            0
+            vrfFee
         );
     }
 

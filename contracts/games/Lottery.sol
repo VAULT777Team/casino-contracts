@@ -240,7 +240,8 @@ contract Lottery is Common {
 
     /**
      * @dev Request VRF and complete the active round for a token once its epoch is over.
-     *      Caller pays VRF fee (native) and receives `completionRewardBps` of the round prize pool.
+     *      Caller pays the VRF fee in the round token and receives
+     *      `completionRewardBps` of the round prize pool.
      */
     function completeLotteryRound(address tokenAddress) external payable nonReentrant {
         uint256 roundId = activeRoundId[tokenAddress];
@@ -266,12 +267,17 @@ contract Lottery is Common {
             return;
         }
 
-        uint256 requestId = _requestRandomWords(1);
+        (uint256 requestId, uint256 vrfFee) = _requestRandomWords(
+            1,
+            tokenAddress,
+            _msgSender(),
+            0
+        );
         round.requestID = requestId;
         round.completer = _msgSender();
         vrfRequestToRound[requestId] = roundId;
 
-        emit Lottery_Completion_Requested(roundId, tokenAddress, requestId, round.completer, 0);
+        emit Lottery_Completion_Requested(roundId, tokenAddress, requestId, round.completer, vrfFee);
     }
 
     /**

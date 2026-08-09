@@ -78,8 +78,8 @@ contract ActivateGames is Script {
         console.log("Enabled VideoPoker:", videoPoker);
 
         //IBankLP(BANK_LP).setGame(blackjack, true);
-        ISubscriptionManager(VRF_ADDRESS).addConsumer(VRF_SUB_ID, blackjack);
-        console.log("Enabled Blackjack:", blackjack);
+        //ISubscriptionManager(VRF_ADDRESS).addConsumer(VRF_SUB_ID, blackjack);
+        //console.log("Enabled Blackjack:", blackjack);
 
         //IBankLP(BANK_LP).setGame(plinko, true);
         ISubscriptionManager(VRF_ADDRESS).addConsumer(VRF_SUB_ID, plinko);
@@ -94,8 +94,8 @@ contract ActivateGames is Script {
         console.log("Enabled Slots:", slots);
 
         //IBankLP(BANK_LP).setGame(mines, true);
-        ISubscriptionManager(VRF_ADDRESS).addConsumer(VRF_SUB_ID, mines);
-        console.log("Enabled Mines:", mines);
+        //ISubscriptionManager(VRF_ADDRESS).addConsumer(VRF_SUB_ID, mines);
+        //console.log("Enabled Mines:", mines);
 
         //IBankLP(BANK_LP).setGame(rockPaperScissors, true);
         ISubscriptionManager(VRF_ADDRESS).addConsumer(VRF_SUB_ID, rockPaperScissors);
@@ -116,12 +116,12 @@ contract ActivateGames is Script {
         console.log("");
 
         //IBankLP(BANK_LP).setGame(americanRoulette, true);
-        ISubscriptionManager(VRF_ADDRESS).addConsumer(VRF_SUB_ID, americanRoulette);
-        console.log("Enabled AmericanRoulette:", americanRoulette);
+        //ISubscriptionManager(VRF_ADDRESS).addConsumer(VRF_SUB_ID, americanRoulette);
+        //console.log("Enabled AmericanRoulette:", americanRoulette);
         
         //IBankLP(BANK_LP).setGame(europeanRoulette, true);
-        ISubscriptionManager(VRF_ADDRESS).addConsumer(VRF_SUB_ID, europeanRoulette);
-        console.log("Enabled EuropeanRoulette:", europeanRoulette);
+        //ISubscriptionManager(VRF_ADDRESS).addConsumer(VRF_SUB_ID, europeanRoulette);
+        //console.log("Enabled EuropeanRoulette:", europeanRoulette);
         
         
         vm.stopBroadcast();

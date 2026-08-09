@@ -140,7 +140,12 @@ contract RockPaperScissors is Common {
 
         _kellyWager(wager, tokenAddress);
         _transferWager(tokenAddress, wager * numBets, msgSender);
-        uint256 id = _requestRandomWords(numBets);
+        (uint256 id, uint256 vrfFee) = _requestRandomWords(
+            numBets,
+            tokenAddress,
+            msgSender,
+            wager * numBets
+        );
 
         rockPaperScissorsGames[msgSender] = RockPaperScissorsGame({
             requestID: id,
@@ -163,7 +168,7 @@ contract RockPaperScissors is Common {
             numBets,
             stopGain,
             stopLoss,
-            0
+            vrfFee
         );
     }
 

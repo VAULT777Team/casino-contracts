@@ -2,7 +2,6 @@
 pragma solidity ^0.8.0;
 
 import {IVRFCoordinatorV2Plus, VRFV2PlusClient} from "@chainlink/contracts/src/v0.8/vrf/dev/interfaces/IVRFCoordinatorV2Plus.sol";
-import {IDecimalAggregator} from "@chainlink/contracts/src/v0.8/data-feeds/interfaces/IDecimalAggregator.sol";
 import {VRFConsumerBaseV2Plus} from "@chainlink/contracts/src/v0.8/vrf/dev/VRFConsumerBaseV2Plus.sol";
 
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
@@ -11,6 +10,7 @@ import {ChainSpecificUtil} from "./ChainSpecificUtil.sol";
 
 import {IBankrollRegistry} from "./bankroll/interfaces/IBankrollRegistry.sol";
 import {IBankLP} from "./bankroll/interfaces/IBankLP.sol";
+import {IVRFFeeManager} from "./VRF/IVRFFeeManager.sol";
 
 /// @dev VRF 2.5 configuration. Pass this struct to every game constructor so
 ///      no values are hardcoded in the base contract.
@@ -20,14 +20,14 @@ struct VRFConfig {
     uint256 subId;
     uint16  reqConfirmations;
     uint32  callbackGasLimit;
-    address linkEthFeed;
+    address feeManager;
 }
 
 abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
     using SafeERC20 for IERC20;
 
     IVRFCoordinatorV2Plus internal s_Coordinator;
-    IDecimalAggregator    public  LINK_ETH_FEED;
+    IVRFFeeManager public VRF_FEE_MANAGER;
 
     bytes32 internal keyHash;
     uint256 internal subscriptionId;
@@ -45,7 +45,7 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
     // ── Constructor ──────────────────────────────────────────────────────────
     constructor(VRFConfig memory vrf) VRFConsumerBaseV2Plus(vrf.coordinator) {
         s_Coordinator    = IVRFCoordinatorV2Plus(vrf.coordinator);
-        LINK_ETH_FEED    = IDecimalAggregator(vrf.linkEthFeed);
+        VRF_FEE_MANAGER  = IVRFFeeManager(vrf.feeManager);
         keyHash          = vrf.keyHash;
         subscriptionId   = vrf.subId;
         reqConfirmations = vrf.reqConfirmations;
@@ -60,10 +60,13 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
     error NotOwner(address want, address have);
     error ZeroWager();
     error PlayerSuspended(uint256 suspensionTime);
+    error InvalidFeeManager();
 
     // ── Events ───────────────────────────────────────────────────────────────
     event WagerTransferred(address game, address token, address player, uint256 amount);
-    event FeeTransferred(address game, address player, uint256 amount);
+    event FeeTransferred(address indexed game, address indexed token, address indexed recipient, uint256 amount);
+
+    mapping(address => uint256) public VRFFees;
 
     // ── Bankroll accessor ────────────────────────────────────────────────────
     function Bankroll() internal view returns (IBankLP) {
@@ -83,6 +86,11 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
         reqConfirmations = newReq;
     }
 
+    function setVRFFeeManager(address newFeeManager) external onlyOwner {
+        if (newFeeManager == address(0)) revert InvalidFeeManager();
+        VRF_FEE_MANAGER = IVRFFeeManager(newFeeManager);
+    }
+
     function setL1Multiplier(uint256 newMultiplier) external onlyOwner {
         // No need for fixed-point math here since multiplier is only used as a percentage (e.g. 120 for 1.2x).
         if (newMultiplier < 10) revert InvalidValue(10, newMultiplier); // Minimum 1.0x
@@ -96,12 +104,40 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
             subId: subscriptionId,
             reqConfirmations: reqConfirmations,
             callbackGasLimit: callbackGasLimit,
-            linkEthFeed: address(LINK_ETH_FEED)
+            feeManager: address(VRF_FEE_MANAGER)
         });
     }
 
     function getL1Multiplier() external view returns (uint256) {
         return _L1Multiplier;
+    }
+
+    function getVRFFee(address tokenAddress, uint32 numWords) public view returns (uint256) {
+        return VRF_FEE_MANAGER.quoteVRFFee(
+            tokenAddress,
+            callbackGasLimit,
+            numWords,
+            tx.gasprice,
+            (ChainSpecificUtil.getCurrentTxL1GasFees() * _L1Multiplier) / 10
+        );
+    }
+
+    function transferFees(address tokenAddress, address to) external nonReentrant {
+        if (msg.sender != Bankroll().getOwner()) {
+            revert NotOwner(Bankroll().getOwner(), msg.sender);
+        }
+
+        uint256 fee = VRFFees[tokenAddress];
+        VRFFees[tokenAddress] = 0;
+
+        if (tokenAddress == address(0)) {
+            (bool success, ) = payable(to).call{value: fee}("");
+            if (!success) revert TransferFailed();
+        } else {
+            IERC20(tokenAddress).safeTransfer(to, fee);
+        }
+
+        emit FeeTransferred(address(this), tokenAddress, to, fee);
     }
 
     // ── Reserve helpers 
@@ -196,7 +232,25 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
     }
 
     // ── VRF request ──────────────────────────────────────────────────────────
-    function _requestRandomWords(uint32 numWords) internal returns (uint256 s_requestId) {
+    function _requestRandomWords(
+        uint32 numWords,
+        address tokenAddress,
+        address player,
+        uint256 nativeWager
+    ) internal returns (uint256 s_requestId, uint256 vrfFee) {
+        vrfFee = getVRFFee(tokenAddress, numWords);
+
+        if (tokenAddress == address(0)) {
+            uint256 requiredValue = nativeWager + vrfFee;
+            if (msg.value < requiredValue) revert InvalidValue(requiredValue, msg.value);
+            _refundExcessValue(player, msg.value - requiredValue);
+        } else {
+            IERC20(tokenAddress).safeTransferFrom(player, address(this), vrfFee);
+            _refundExcessValue(player, msg.value);
+        }
+
+        VRFFees[tokenAddress] += vrfFee;
+
         s_requestId = s_Coordinator.requestRandomWords(
             VRFV2PlusClient.RandomWordsRequest({
                 keyHash:            keyHash,
@@ -214,9 +268,9 @@ abstract contract Common is ReentrancyGuard, VRFConsumerBaseV2Plus {
     /// @dev Override called by VRFConsumerBaseV2Plus.rawFulfillRandomWords.
     function fulfillRandomWords(uint256 requestId, uint256[] calldata randomWords) internal virtual override;
 
-    function _refundExcessValue(uint256 refund) internal {
+    function _refundExcessValue(address recipient, uint256 refund) internal {
         if (refund == 0) return;
-        (bool success, ) = payable(msg.sender).call{value: refund}("");
+        (bool success, ) = payable(recipient).call{value: refund}("");
         if (!success) revert RefundFailed();
     }
 

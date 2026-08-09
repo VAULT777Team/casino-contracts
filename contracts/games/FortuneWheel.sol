@@ -190,7 +190,12 @@ contract FortuneWheel is Common {
         _reserveMaxPayout(tokenAddress, maxPayoutTotal);
         _transferWager(tokenAddress, totalWager, msgSender);
 
-        uint256 id = _requestRandomWords(numBets);
+        (uint256 id, uint256 vrfFee) = _requestRandomWords(
+            numBets,
+            tokenAddress,
+            msgSender,
+            totalWager
+        );
 
         fortuneWheelGames[msgSender] = FortuneWheelGame({
             requestID: id,
@@ -210,7 +215,7 @@ contract FortuneWheel is Common {
             wager,
             numBets,
             tokenAddress,
-            0,
+            vrfFee,
             configId
         );
     }

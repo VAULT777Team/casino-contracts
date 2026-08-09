@@ -98,7 +98,7 @@ contract VideoPokerReplacementUniquenessTest is Test {
             subId: 0,
             reqConfirmations: 3,
             callbackGasLimit: 2_000_000,
-            linkEthFeed: address(0x2222)
+            feeManager: address(0x2222)
         });
         VideoPokerHarness poker = new VideoPokerHarness(address(registry), vrf);
 

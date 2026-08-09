@@ -385,7 +385,12 @@ contract Slots is Common {
             wager * numBets,
             msgSender
         );
-        uint256 id = _requestRandomWords(numBets);
+        (uint256 id, uint256 vrfFee) = _requestRandomWords(
+            numBets,
+            tokenAddress,
+            msgSender,
+            wager * numBets
+        );
 
         slotsGames[msgSender] = SlotsGame({
             requestID: id,
@@ -406,7 +411,7 @@ contract Slots is Common {
             numBets,
             stopGain,
             stopLoss,
-            0
+            vrfFee
         );
     }
 

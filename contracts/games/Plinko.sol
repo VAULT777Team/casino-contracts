@@ -208,7 +208,12 @@ contract Plinko is Common {
 
         _kellyWager(wager, tokenAddress, numRows, risk);
         _transferWager(tokenAddress, wager * numBets, msgSender);
-        uint256 id = _requestRandomWords(numBets);
+        (uint256 id, uint256 vrfFee) = _requestRandomWords(
+            numBets,
+            tokenAddress,
+            msgSender,
+            wager * numBets
+        );
 
         plinkoGames[msgSender] = PlinkoGame({
             requestID: id,
@@ -233,7 +238,7 @@ contract Plinko is Common {
             numBets,
             stopGain,
             stopLoss,
-            0
+            vrfFee
         );
     }
 

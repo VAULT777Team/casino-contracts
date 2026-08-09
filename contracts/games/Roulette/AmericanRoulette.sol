@@ -162,7 +162,12 @@ contract AmericanRoulette is Common {
             msgSender
         );
 
-        uint256 requestID = _requestRandomWords(1);
+        (uint256 requestID, uint256 vrfFee) = _requestRandomWords(
+            1,
+            tokenAddress,
+            msgSender,
+            totalWager
+        );
 
         RouletteGame storage game = rouletteGames[msgSender];
         game.requestID = requestID;
@@ -186,7 +191,7 @@ contract AmericanRoulette is Common {
             betTypes,
             betValues,
             wagers,
-            0
+            vrfFee
         );
     }
 

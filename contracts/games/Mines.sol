@@ -231,7 +231,12 @@ contract Mines is Common {
             wager,
             msgSender
         );
-        uint256 id = _requestRandomWords(numTilesToReveal);
+        (uint256 id, uint256 vrfFee) = _requestRandomWords(
+            numTilesToReveal,
+            tokenAddress,
+            msgSender,
+            wager
+        );
         minesIDs[id] = msgSender;
         game.numMines = numMines;
         game.wager = wager;
@@ -247,7 +252,7 @@ contract Mines is Common {
             tokenAddress,
             numMines,
             isCashout,
-            0
+            vrfFee
         );
     }
 
@@ -295,13 +300,18 @@ contract Mines is Common {
             );
         }
 
-        uint256 id = _requestRandomWords(numTilesToReveal);
+        (uint256 id, uint256 vrfFee) = _requestRandomWords(
+            numTilesToReveal,
+            game.tokenAddress,
+            msgSender,
+            0
+        );
         minesIDs[id] = msgSender;
         game.tilesPicked = tiles;
         game.isCashout = isCashout;
         game.requestID = id;
         game.blockNumber = uint64(ChainSpecificUtil.getBlockNumber());
-        emit Mines_Fee_Event(msgSender, 0);
+        emit Mines_Fee_Event(msgSender, vrfFee);
     }
 
     /**

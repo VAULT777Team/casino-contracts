@@ -138,7 +138,12 @@ contract Rug is Common {
             msgSender
         );
 
-        uint256 id = _requestRandomWords(numBets);
+        (uint256 id, uint256 vrfFee) = _requestRandomWords(
+            numBets,
+            tokenAddress,
+            msgSender,
+            wager * numBets
+        );
 
         coinFlipGames[msgSender] = CoinFlipGame({
             requestID: id,
@@ -160,7 +165,7 @@ contract Rug is Common {
             numBets,
             stopGain,
             stopLoss,
-            0
+            vrfFee
         );
     }
 
