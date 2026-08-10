@@ -110,8 +110,8 @@ contract Keno is Common {
         if (kenoGames[msgSender].requestID != 0) {
             revert AwaitingVRF(kenoGames[msgSender].requestID);
         }
-        if (!(numBets > 0 && numBets <= 100)) {
-            revert InvalidNumBets(100);
+        if (!(numBets > 0 && numBets <= 5)) {
+            revert InvalidNumBets(5);
         }
 
         // validate selected numbers
