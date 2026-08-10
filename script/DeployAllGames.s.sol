@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import {console, Script} from "forge-std/Script.sol";
 import {CoinFlip} from "../contracts/games/CoinFlip.sol";
+import {CoinFlipDoubleOrNothing} from "../contracts/games/CoinFlipDoubleOrNothing.sol";
 import {Dice} from "../contracts/games/Dice.sol";
 import {VideoPoker} from "../contracts/games/VideoPoker.sol";
 import {Blackjack} from "../contracts/games/Blackjack.sol";
@@ -30,6 +31,7 @@ contract DeployAllGames is Script {
 
     // Deployed game addresses
     address public coinFlip;
+    address public coinFlipDoubleOrNothing;
     address public dice;
     address public videoPoker;
     address public blackjack;
@@ -68,6 +70,13 @@ contract DeployAllGames is Script {
         console.log("Deploying CoinFlip...");
         coinFlip = address(new CoinFlip(BANKLP_REGISTRY, vrf, refundCooldownBlocks));
         console.log("CoinFlip deployed to:", coinFlip);
+        console.log("");
+
+        console.log("Deploying CoinFlipDoubleOrNothing...");
+        coinFlipDoubleOrNothing = address(
+            new CoinFlipDoubleOrNothing(BANKLP_REGISTRY, vrf, refundCooldownBlocks)
+        );
+        console.log("CoinFlipDoubleOrNothing deployed to:", coinFlipDoubleOrNothing);
         console.log("");
 
         console.log("Deploying RockPaperScissors...");
@@ -269,6 +278,7 @@ contract DeployAllGames is Script {
         console.log("");
         console.log("Game Contracts:");
         console.log("  CoinFlip:          ", coinFlip);
+        console.log("  CoinFlip Double:   ", coinFlipDoubleOrNothing);
         console.log("  Dice:              ", dice);
         console.log("  VideoPoker:        ", videoPoker);
         console.log("  Blackjack:         ", blackjack);
