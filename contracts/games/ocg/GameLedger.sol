@@ -85,6 +85,9 @@ contract GameLedgerV3 is ReentrancyGuard {
     /// @dev token = address(0) means ETH
     mapping(address => mapping(address => uint256)) public pendingWithdrawals;
 
+    mapping(bytes32 => uint256) public roundPaidOut;
+    mapping(bytes32 => bool) public roundCanceled;
+
     // -------------------------------------------------------------------------
     // Events
     // -------------------------------------------------------------------------
@@ -426,6 +429,7 @@ contract GameLedgerV3 is ReentrancyGuard {
         address player = r.player;
         address token = r.token;
 
+        roundCanceled[roundKey] = true;
         r.closedAt = block.timestamp;
 
         try IBankLP(bankroll).transferPayout(player, refund, token) {
@@ -592,6 +596,7 @@ contract GameLedgerV3 is ReentrancyGuard {
             r.token = token;
             r.openedAt = ts;
         } else {
+            require(r.closedAt == 0, "ROUND_CLOSED");
             require(r.player == player, "PLAYER_MISMATCH");
             require(r.token == token, "TOKEN_MISMATCH");
         }
@@ -689,10 +694,20 @@ contract GameLedgerV3 is ReentrancyGuard {
         Round storage r = rounds[roundKey];
 
         require(r.player != address(0), "ROUND_NOT_FOUND");
+        require(!roundCanceled[roundKey], "ROUND_CANCELED");
         require(r.token == token, "TOKEN_MISMATCH");
-        require(payout <= r.totalStake * maxPayoutMultiplierX, "PAYOUT_LIMIT");
 
-        r.closedAt = block.timestamp;
+        uint256 cumulativePayout = roundPaidOut[roundKey] + payout;
+        require(
+            cumulativePayout <= r.totalStake * maxPayoutMultiplierX,
+            "PAYOUT_LIMIT"
+        );
+
+        roundPaidOut[roundKey] = cumulativePayout;
+
+        if (r.closedAt == 0) {
+            r.closedAt = block.timestamp;
+        }
 
         player = r.player;
 
