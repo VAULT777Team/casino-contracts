@@ -166,6 +166,15 @@ contract Keno is Common {
         );
     }
 
+    /**
+        If VRF fulfillment is delayed past
+        refundCooldownBlocks, a player on a
+        public-mempool chain can see the pending
+        fulfillment tx, compute the outcome, and
+        front-run with a refund when losing
+        (outcome-aware exit). Mitigated on Arbitrum (FCFS
+        sequencer, per ChainSpecificUtil). 
+    */
     function Keno_Refund() external nonReentrant {
         address msgSender = _msgSender();
         KenoGame storage game = kenoGames[msgSender];

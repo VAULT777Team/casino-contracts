@@ -468,7 +468,6 @@ contract Slots is Common {
 
         address tokenAddress = game.tokenAddress;
 
-        uint32 processedRows;
         bool stopReached;
 
         uint32 totalBonusRoundsAll;
@@ -514,7 +513,6 @@ contract Slots is Common {
                         totalBonusRounds += bonusRounds;
                     }
 
-                    processedRows++;
                 }
             } else {
                 uint256 combinedMultiplier;
@@ -549,7 +547,6 @@ contract Slots is Common {
                         _accumulateSymbolCounts(symbolCounts, outcome, symbolBase);
                     }
 
-                    processedRows++;
                 }
 
                 if (symbolBase != 0) {
@@ -636,7 +633,7 @@ contract Slots is Common {
             }
         }
 
-        payout += (totalRows - processedRows) * game.wager;
+        payout += (game.numBets - i) * game.wager;
 
         emit Slots_Outcome_Event(
             playerAddress,

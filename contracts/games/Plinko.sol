@@ -369,7 +369,7 @@ contract Plinko is Common {
     ) internal view returns (uint256 multiplier, uint16 currentGameResult) {
         int8 ended = 0;
         for (uint8 g = 0; g < numRows; g++) {
-            bool bitValue = _getBitValue(randomWords, g);
+            bool bitValue = _getDirection(randomWords, g, ended);
             if (bitValue) {
                 ended += 1;
                 currentGameResult = setBit(currentGameResult, g);
@@ -379,6 +379,21 @@ contract Plinko is Common {
         }
         uint8 multiplierSlot = uint8(ended + int8(numRows)) >> 1;
         multiplier = plinkoMultipliers[risk][numRows][multiplierSlot];
+    }
+
+    function _getDirection(
+        uint256 randomWord,
+        uint8 row,
+        int8 position
+    ) internal pure returns ( bool moveRight ) {
+        uint256 roll = uint256(keccak256(abi.encode(randomWord, row))) % 10_000;
+
+        uint256 pullChance = position < 0
+            ? 5_050
+            : position > 0 
+                ? 4_950 : 5_000;
+
+        return roll < pullChance;
     }
 
     function _getBitValue(

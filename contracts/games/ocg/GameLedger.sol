@@ -1,23 +1,15 @@
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.24;
+// SPDX-License-Identifier: GPL-3.0
+pragma solidity ^0.8.0;
 
-import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-/// @title OCG Game Ledger
-/// @author @FuegoLabz
-/// @notice On-chain round based betting ledger used by OCG games
-/// @custom:security-contact security@fuegolabz.io
+/// @title Vault777 Game Ledger
+/// @custom:security-contact security@vault777.com
 /// @dev Supports batched bets and settlements with replay protected action keys.
 ///      The contract does not validate game logic, results are trusted from the operator.
 ///      Failed payouts are credited to pending withdrawals to prevent blocking execution.
-///
-/// @dev Trust model:
-///      The contract is a last barrier. The backend (operator) is the primary trust
-///      anchor and validates game logic before submitting. Transactions are initiated
-///      via session keys on behalf of users; a user intercepting and modifying a tx
-///      breaks the session signer authorization at the transport level. The contract
-///      confirms only that an operator signed off on the sender + total value.
-
+///      Supports ETH and ERC20 tokens. address(0) is used for ETH.
 abstract contract ReentrancyGuard {
     uint256 private constant _NOT_ENTERED = 1;
     uint256 private constant _ENTERED = 2;
@@ -32,72 +24,66 @@ abstract contract ReentrancyGuard {
 }
 
 interface IRegistry {
-    function getCurrentBankroll() external view returns (
-        address bankroll,
-        address treasury,
-        string memory version,
-        uint256 activatedAt
-    );
+    function getCurrentBankroll()
+        external
+        view
+        returns (
+            address bankroll,
+            address treasury,
+            string memory version,
+            uint256 activatedAt
+        );
 }
 
 interface IBankLP {
     function depositEther() external payable;
-    function transferPayout(address player, uint256 amount, address token) external;
+
+    function deposit(address token, uint256 amount) external;
+
+    function transferPayout(
+        address player,
+        uint256 amount,
+        address token
+    ) external;
 }
 
-contract OCGgameLedgerV2 is ReentrancyGuard {
-    /// @notice Contract owner
+contract GameLedgerV3 is ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
     address public owner;
-
-    /// @notice Registry address used for withdrawals of excess bankroll
     address public registry;
-
-    // @notice Baankroll address for liquidity management and treasury sweeps
     address public bankroll;
 
-    /// @notice Global pause flag
     bool public paused;
 
-    /// @notice Maximum payout multiplier relative to stake (e.g. 100x)
     uint256 public maxPayoutMultiplierX = 100;
-
-    /// @notice Time window (seconds) during which a round can be canceled
     uint256 public cancelTimeframe = 600;
 
-    /// @notice Total amount owed to players via pending withdrawals
-    /// @dev Prevents sweeping funds reserved for pending player payouts
-    uint256 public totalPendingWithdrawals;
+    /// @notice Total amount owed to players via pending withdrawals, by token
+    /// @dev address(0) means ETH
+    mapping(address => uint256) public totalPendingWithdrawalsByToken;
 
-    /// @notice Minimal round state.
-    /// @dev player:     non-zero means round exists; payout recipient
-    /// @dev totalStake: sum of all bets; used for cancel refund and payout cap
-    /// @dev openedAt:   locked at first bet; used for cancel timeframe check
-    /// @dev closedAt:   non-zero means at least one settlement has occurred;
-    ///                  used by cancel() to block refund after any payout
+    /// @notice Round state
+    /// @dev token = address(0) means ETH
     struct Round {
         address player;
+        address token;
         uint256 totalStake;
         uint256 openedAt;
         uint256 closedAt;
     }
 
-    /// @notice Round storage indexed by round key
     mapping(bytes32 => Round) public rounds;
-
-    /// @notice Prevents replay of bet and settlement action keys
     mapping(bytes32 => bool) public actionUsed;
 
-    /// @notice Authorized operators to settle / bet signers
     mapping(address => bool) public isOperator;
-
-    /// @notice Admin addresses with limited governance permissions
     mapping(address => bool) public isAdmin;
 
-    /// @notice Self-exclusion expiration timestamps
     mapping(address => uint256) public selfExcludedUntil;
 
-    /// @notice Failed player payouts claimable via withdrawPending()
-    mapping(address => uint256) public pendingWithdrawals;
+    /// @notice player => token => amount
+    /// @dev token = address(0) means ETH
+    mapping(address => mapping(address => uint256)) public pendingWithdrawals;
 
     // -------------------------------------------------------------------------
     // Events
@@ -107,31 +93,55 @@ contract OCGgameLedgerV2 is ReentrancyGuard {
         bytes32 indexed actionKey,
         bytes32 indexed roundKey,
         address indexed player,
+        address token,
         uint256 stake
     );
+
     event BetSettled(
         bytes32 indexed actionKey,
         bytes32 indexed roundKey,
         address indexed player,
+        address token,
         uint256 payout
     );
+
     event RoundCanceled(
         bytes32 indexed roundKey,
         address indexed player,
+        address token,
         uint256 refund
     );
-    event PendingPayoutRecorded(address indexed player, uint256 amount);
-    event PendingWithdrawalClaimed(address indexed player, uint256 amount);
+
+    event PendingPayoutRecorded(
+        address indexed player,
+        address indexed token,
+        uint256 amount
+    );
+
+    event PendingWithdrawalClaimed(
+        address indexed player,
+        address indexed token,
+        uint256 amount
+    );
+
     event OperatorUpdated(address indexed operator, bool allowed);
     event AdminUpdated(address indexed admin, bool allowed);
     event RegistryUpdated(address indexed registry);
-    event BankrollDeposited(address indexed from, uint256 amount);
-    event TreasurySwept(uint256 amount);
-    event EmergencyWithdraw(uint256 amount);
+    event BankrollUpdated(address indexed bankroll);
+
+    event BankrollDeposited(
+        address indexed from,
+        address indexed token,
+        uint256 amount
+    );
+
+    event EmergencyWithdraw(address indexed token, uint256 amount);
+
     event OwnershipTransferred(
         address indexed previousOwner,
         address indexed newOwner
     );
+
     event MaxPayoutMultiplierUpdated(uint256 newMultiplierX);
     event CancelTimeframeUpdated(uint256 newTimeframe);
     event Paused(address indexed by);
@@ -176,16 +186,18 @@ contract OCGgameLedgerV2 is ReentrancyGuard {
 
     constructor(address _operator, address _registry) {
         require(_registry != address(0), "ZERO_REGISTRY");
-    
+
         owner = msg.sender;
         emit OwnershipTransferred(address(0), msg.sender);
 
         registry = _registry;
+        emit RegistryUpdated(_registry);
+
         (address _bankroll, , , ) = IRegistry(_registry).getCurrentBankroll();
         require(_bankroll != address(0), "ZERO_BANKROLL");
-        bankroll = _bankroll;
 
-        emit RegistryUpdated(_registry);
+        bankroll = _bankroll;
+        emit BankrollUpdated(_bankroll);
 
         if (_operator != address(0)) {
             isOperator[_operator] = true;
@@ -199,14 +211,33 @@ contract OCGgameLedgerV2 is ReentrancyGuard {
 
     function transferOwnership(address newOwner) external onlyOwner {
         require(newOwner != address(0), "ZERO_OWNER");
+
         emit OwnershipTransferred(owner, newOwner);
         owner = newOwner;
     }
 
     function setOperator(address operator) external onlyOwner {
         require(operator != address(0), "ZERO_OPERATOR");
+
         isOperator[operator] = true;
         emit OperatorUpdated(operator, true);
+    }
+
+    function setOperators(address[] calldata operators) external onlyOwner {
+        uint256 n = operators.length;
+
+        for (uint256 i; i < n; ) {
+            address operator = operators[i];
+
+            require(operator != address(0), "ZERO_OPERATOR");
+
+            isOperator[operator] = true;
+            emit OperatorUpdated(operator, true);
+
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     function removeOperator(address operator) external onlyOwner {
@@ -214,8 +245,24 @@ contract OCGgameLedgerV2 is ReentrancyGuard {
         emit OperatorUpdated(operator, false);
     }
 
+    function removeOperators(address[] calldata operators) external onlyOwner {
+        uint256 n = operators.length;
+
+        for (uint256 i; i < n; ) {
+            address operator = operators[i];
+
+            isOperator[operator] = false;
+            emit OperatorUpdated(operator, false);
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
     function setAdmin(address admin) external onlyOwner {
         require(admin != address(0), "ZERO_ADMIN");
+
         isAdmin[admin] = true;
         emit AdminUpdated(admin, true);
     }
@@ -227,21 +274,24 @@ contract OCGgameLedgerV2 is ReentrancyGuard {
 
     function setRegistry(address _registry) external onlyOwnerOrAdmin {
         require(_registry != address(0), "ZERO_REGISTRY");
+
         registry = _registry;
         emit RegistryUpdated(_registry);
     }
 
-    /// @notice Re-syncs bankroll address from the registry (call after a bankroll migration)
     function updateBankroll() external onlyOwnerOrAdmin {
         (address _bankroll, , , ) = IRegistry(registry).getCurrentBankroll();
         require(_bankroll != address(0), "ZERO_BANKROLL");
+
         bankroll = _bankroll;
+        emit BankrollUpdated(_bankroll);
     }
 
     function setMaxPayoutMultiplierX(
         uint256 newMultiplier
     ) external onlyOwnerOrAdmin {
         require(newMultiplier >= 1, "TOO_LOW");
+
         maxPayoutMultiplierX = newMultiplier;
         emit MaxPayoutMultiplierUpdated(newMultiplier);
     }
@@ -260,10 +310,10 @@ contract OCGgameLedgerV2 is ReentrancyGuard {
     function pause() external {
         require(
             msg.sender == owner ||
-                isOperator[msg.sender] ||
                 isAdmin[msg.sender],
             "NOT_AUTHORIZED"
         );
+
         paused = true;
         emit Paused(msg.sender);
     }
@@ -277,158 +327,89 @@ contract OCGgameLedgerV2 is ReentrancyGuard {
     // Player Actions
     // -------------------------------------------------------------------------
 
-    /// @notice Self-exclude from betting for a duration, or permanently
-    /// @param durationSeconds Duration in seconds.
     function selfExclude(uint256 durationSeconds) external {
         require(durationSeconds > 0, "INVALID_DURATION");
 
         uint256 until = block.timestamp + durationSeconds;
 
         require(until > selfExcludedUntil[msg.sender], "EXCLUSION_SHORTER");
+
         selfExcludedUntil[msg.sender] = until;
         emit SelfExcluded(msg.sender, until);
     }
 
-    /// @notice Places one or more bets across one or multiple rounds
-    /// @dev Signature scope is intentionally limited to (sender, totalValue, contract, validUntil)
-    ///      Arrays are NOT included in signature to save ~30-50k gas per batch
-    ///      Session-layer provides parameter integrity protection
-    /// @param actionKeys  Unique identifiers for each betting action (replay protection)
-    /// @param roundKeys   Identifiers of the rounds the bets belong to
-    /// @param stakes      Stake amounts corresponding to each action
-    /// @param validUntil  Timestamp after which the signature is rejected
-    /// @param signature   Operator signature over (sender, totalValue, contract, validUntil)
+    /// @notice Places one or more bets directly from the player/session wallet.
+    /// @dev token = address(0) means ETH.
+    ///      For ERC20, msg.sender must approve this ledger first.
     function betBatch(
+        address token,
         bytes32[] calldata actionKeys,
         bytes32[] calldata roundKeys,
         uint256[] calldata stakes,
         uint256 validUntil,
         bytes calldata signature
     ) external payable nonReentrant whenNotPaused notSelfExcluded {
-        uint256 n = actionKeys.length;
-        require(n > 0, "EMPTY");
-        require(roundKeys.length == n && stakes.length == n, "LEN");
+        require(block.timestamp <= validUntil, "SIG_EXPIRED");
 
-        uint256 totalValue;
-        uint256 ts = block.timestamp;
-
-        require(ts <= validUntil, "SIG_EXPIRED");
-
-        for (uint256 i; i < n; ) {
-            bytes32 actionKey = actionKeys[i];
-            bytes32 roundKey = roundKeys[i];
-            uint256 stake = stakes[i];
-
-            require(stake > 0, "ZERO_STAKE");
-            require(!actionUsed[actionKey], "DUP_ACTION");
-            actionUsed[actionKey] = true;
-
-            Round storage r = rounds[roundKey];
-
-            if (r.player == address(0)) {
-                r.player = msg.sender;
-                r.openedAt = ts;
-            } else {
-                require(r.player == msg.sender, "PLAYER_MISMATCH");
-            }
-
-            r.totalStake += stake;
-            totalValue += stake;
-
-            emit BetPlaced(actionKey, roundKey, msg.sender, stake);
-
-
-            unchecked {
-                ++i;
-            }
-        }
-
-        require(msg.value == totalValue, "BAD_VALUE");
-
-        bytes32 digest = keccak256(
-            abi.encode(msg.sender, totalValue, address(this), validUntil)
+        uint256 totalValue = _recordBetBatch(
+            token,
+            actionKeys,
+            roundKeys,
+            stakes
         );
-        address signer = ECDSA.recover(
-            ECDSA.toEthSignedMessageHash(digest),
+
+        _validateBetPaymentAndSignature(
+            token,
+            totalValue,
+            validUntil,
             signature
         );
-        require(isOperator[signer], "INVALID_SIGNATURE");
 
-        // Forward stakes to BankLP liquidity pool
-        IBankLP(bankroll).depositEther{value: totalValue}();
-        emit BankrollDeposited(msg.sender, totalValue);
+        _depositToBankroll(token, totalValue);
     }
 
-    /// @notice Settles multiple bet actions across one or more rounds
-    /// @dev A round may be settled more than once (multiple payouts per round are valid).
-    ///      closedAt is set on first settlement and updated on subsequent ones — it signals
-    ///      to cancel() that at least one payout has occurred, not that the round is sealed.
-    ///      Payout cap is checked per-settlement against current global multiplier.
-    /// @param actionKeys Unique identifiers for each settlement action
-    /// @param roundKeys  Identifiers of the rounds being settled
-    /// @param payouts    Payout amounts for each settlement
+    /// @notice Places one or more bets on behalf of one or many players.
+    /// @dev Only an authorized operator can call this.
+    ///      For ERC20, each player must approve this ledger first.
+    ///      For ETH, the operator sends msg.value equal to totalValue.
+    function betBatchFor(
+        address token,
+        address[] calldata players,
+        bytes32[] calldata actionKeys,
+        bytes32[] calldata roundKeys,
+        uint256[] calldata stakes
+    ) external payable onlyOperator nonReentrant whenNotPaused {
+        uint256 totalValue = _recordBetBatchFor(
+            token,
+            players,
+            actionKeys,
+            roundKeys,
+            stakes
+        );
+
+        _depositBatchToBankroll(token, players, stakes, totalValue);
+    }
+
+    /// @notice Settles multiple bet actions across one or more rounds.
+    /// @dev token = address(0) means ETH.
+    ///      One settlement batch should contain only one token.
     function settleBatch(
+        address token,
         bytes32[] calldata actionKeys,
         bytes32[] calldata roundKeys,
         uint256[] calldata payouts
     ) external onlyOperator nonReentrant whenNotPaused {
-        uint256 n = actionKeys.length;
-        require(n > 0, "EMPTY");
-        require(roundKeys.length == n && payouts.length == n, "LEN");
+        address[] memory players = _recordSettlementBatch(
+            token,
+            actionKeys,
+            roundKeys,
+            payouts
+        );
 
-        uint256 totalBatchPayout;
-        uint256 multiplierX = maxPayoutMultiplierX;
-        uint256 ts = block.timestamp;
-        address[] memory players = new address[](n);
-
-        for (uint256 i; i < n; ) {
-            bytes32 actionKey = actionKeys[i];
-            bytes32 roundKey = roundKeys[i];
-            uint256 payout = payouts[i];
-
-            require(!actionUsed[actionKey], "DUP_ACTION");
-            actionUsed[actionKey] = true;
-
-            Round storage r = rounds[roundKey];
-            require(r.player != address(0), "ROUND_NOT_FOUND");
-            require(payout <= r.totalStake * multiplierX, "PAYOUT_LIMIT");
-
-            r.closedAt = ts; // marks that at least one settlement occurred
-            players[i] = r.player;
-            totalBatchPayout += payout;
-
-            emit BetSettled(actionKey, roundKey, r.player, payout);
-
-            unchecked {
-                ++i;
-            }
-        }
-
-        if (totalBatchPayout > 0) {
-            address _bankroll = bankroll;
-            for (uint256 i; i < n; ) {
-                uint256 payout = payouts[i];
-                if (payout > 0) {
-                    address player = players[i];
-                    try IBankLP(_bankroll).transferPayout(player, payout, address(0)) {
-                        // success
-                    } catch {
-                        pendingWithdrawals[player] += payout;
-                        totalPendingWithdrawals += payout;
-                        emit PendingPayoutRecorded(player, payout);
-                    }
-                }
-                unchecked {
-                    ++i;
-                }
-            }
-        }
+        _processBatchPayouts(token, players, payouts);
     }
 
-    /// @notice Cancels a round and refunds the player stake
-    /// @dev Blocked if any settlement has already occurred (closedAt != 0)
-    ///      or if the cancel timeframe has elapsed.
-    /// @param roundKey Identifier of the round to cancel
+    /// @notice Cancels a round and refunds the player stake.
     function cancel(
         bytes32 roundKey
     ) external onlyOperator nonReentrant whenNotPaused {
@@ -443,45 +424,348 @@ contract OCGgameLedgerV2 is ReentrancyGuard {
 
         uint256 refund = r.totalStake;
         address player = r.player;
+        address token = r.token;
 
         r.closedAt = block.timestamp;
 
-        try IBankLP(bankroll).transferPayout(player, refund, address(0)) {
+        try IBankLP(bankroll).transferPayout(player, refund, token) {
             // success
         } catch {
-            pendingWithdrawals[player] += refund;
-            totalPendingWithdrawals += refund;
-            emit PendingPayoutRecorded(player, refund);
+            _recordPendingPayout(player, token, refund);
         }
 
-        emit RoundCanceled(roundKey, player, refund);
+        emit RoundCanceled(roundKey, player, token, refund);
     }
 
-    /// @notice Withdraws pending payouts that previously failed to transfer via BankLP
-    function withdrawPending() external nonReentrant {
-        uint256 amount = pendingWithdrawals[msg.sender];
+    /// @notice Withdraws pending payouts that previously failed.
+    /// @dev token = address(0) means ETH.
+    function withdrawPending(address token) external nonReentrant {
+        uint256 amount = pendingWithdrawals[msg.sender][token];
+
         require(amount > 0, "NO_PENDING");
 
-        pendingWithdrawals[msg.sender] = 0;
-        totalPendingWithdrawals -= amount;
+        pendingWithdrawals[msg.sender][token] = 0;
+        totalPendingWithdrawalsByToken[token] -= amount;
 
-        IBankLP(bankroll).transferPayout(msg.sender, amount, address(0));
+        IBankLP(bankroll).transferPayout(msg.sender, amount, token);
 
-        emit PendingWithdrawalClaimed(msg.sender, amount);
+        emit PendingWithdrawalClaimed(msg.sender, token, amount);
     }
 
-    /// @notice Recovers any ETH accidentally sent directly to this contract (not via betBatch)
-    /// @dev All normal game funds live in BankLP; this ledger should hold zero balance
-    function emergencyWithdraw() external nonReentrant onlyOwner {
+    // -------------------------------------------------------------------------
+    // Internal bet helpers - direct player flow
+    // -------------------------------------------------------------------------
+
+    function _recordBetBatch(
+        address token,
+        bytes32[] calldata actionKeys,
+        bytes32[] calldata roundKeys,
+        uint256[] calldata stakes
+    ) internal returns (uint256 totalValue) {
+        uint256 n = actionKeys.length;
+
+        require(n > 0, "EMPTY");
+        require(roundKeys.length == n && stakes.length == n, "LEN");
+
+        uint256 ts = block.timestamp;
+
+        for (uint256 i; i < n; ) {
+            totalValue += _recordSingleBetFor(
+                token,
+                msg.sender,
+                actionKeys[i],
+                roundKeys[i],
+                stakes[i],
+                ts
+            );
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    function _validateBetPaymentAndSignature(
+        address token,
+        uint256 totalValue,
+        uint256 validUntil,
+        bytes calldata signature
+    ) internal view {
+        if (token == address(0)) {
+            require(msg.value == totalValue, "BAD_VALUE");
+        } else {
+            require(msg.value == 0, "NO_ETH_ALLOWED");
+        }
+
+        bytes32 digest = keccak256(
+            abi.encode(msg.sender, token, totalValue, address(this), validUntil)
+        );
+
+        address signer = ECDSA.recover(
+            ECDSA.toEthSignedMessageHash(digest),
+            signature
+        );
+
+        require(isOperator[signer], "INVALID_SIGNATURE");
+    }
+
+    function _depositToBankroll(address token, uint256 amount) internal {
+        if (amount == 0) return;
+
+        address _bankroll = bankroll;
+
+        if (token == address(0)) {
+            IBankLP(_bankroll).depositEther{value: amount}();
+        } else {
+            IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+
+            IERC20(token).safeApprove(_bankroll, 0);
+            IERC20(token).safeApprove(_bankroll, amount);
+
+            IBankLP(_bankroll).deposit(token, amount);
+        }
+
+        emit BankrollDeposited(msg.sender, token, amount);
+    }
+
+    // -------------------------------------------------------------------------
+    // Internal bet helpers - operator flow
+    // -------------------------------------------------------------------------
+
+    function _recordBetBatchFor(
+        address token,
+        address[] calldata players,
+        bytes32[] calldata actionKeys,
+        bytes32[] calldata roundKeys,
+        uint256[] calldata stakes
+    ) internal returns (uint256 totalValue) {
+        uint256 n = actionKeys.length;
+
+        require(n > 0, "EMPTY");
+        require(
+            players.length == n &&
+                roundKeys.length == n &&
+                stakes.length == n,
+            "LEN"
+        );
+
+        uint256 ts = block.timestamp;
+
+        for (uint256 i; i < n; ) {
+            address player = players[i];
+
+            require(player != address(0), "ZERO_PLAYER");
+            require(ts >= selfExcludedUntil[player], "SELF_EXCLUDED");
+
+            totalValue += _recordSingleBetFor(
+                token,
+                player,
+                actionKeys[i],
+                roundKeys[i],
+                stakes[i],
+                ts
+            );
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    function _recordSingleBetFor(
+        address token,
+        address player,
+        bytes32 actionKey,
+        bytes32 roundKey,
+        uint256 stake,
+        uint256 ts
+    ) internal returns (uint256) {
+        require(stake > 0, "ZERO_STAKE");
+        require(!actionUsed[actionKey], "DUP_ACTION");
+
+        actionUsed[actionKey] = true;
+
+        Round storage r = rounds[roundKey];
+
+        if (r.player == address(0)) {
+            r.player = player;
+            r.token = token;
+            r.openedAt = ts;
+        } else {
+            require(r.player == player, "PLAYER_MISMATCH");
+            require(r.token == token, "TOKEN_MISMATCH");
+        }
+
+        r.totalStake += stake;
+
+        emit BetPlaced(actionKey, roundKey, player, token, stake);
+
+        return stake;
+    }
+
+    function _depositBatchToBankroll(
+        address token,
+        address[] calldata players,
+        uint256[] calldata stakes,
+        uint256 totalValue
+    ) internal {
+        if (totalValue == 0) return;
+
+        address _bankroll = bankroll;
+
+        if (token == address(0)) {
+            require(msg.value == totalValue, "BAD_VALUE");
+
+            IBankLP(_bankroll).depositEther{value: totalValue}();
+
+            emit BankrollDeposited(msg.sender, token, totalValue);
+        } else {
+            require(msg.value == 0, "NO_ETH_ALLOWED");
+
+            uint256 n = players.length;
+
+            for (uint256 i; i < n; ) {
+                IERC20(token).safeTransferFrom(
+                    players[i],
+                    address(this),
+                    stakes[i]
+                );
+
+                unchecked {
+                    ++i;
+                }
+            }
+
+            IERC20(token).safeApprove(_bankroll, 0);
+            IERC20(token).safeApprove(_bankroll, totalValue);
+
+            IBankLP(_bankroll).deposit(token, totalValue);
+
+            emit BankrollDeposited(msg.sender, token, totalValue);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Internal settlement helpers
+    // -------------------------------------------------------------------------
+
+    function _recordSettlementBatch(
+        address token,
+        bytes32[] calldata actionKeys,
+        bytes32[] calldata roundKeys,
+        uint256[] calldata payouts
+    ) internal returns (address[] memory players) {
+        uint256 n = actionKeys.length;
+
+        require(n > 0, "EMPTY");
+        require(roundKeys.length == n && payouts.length == n, "LEN");
+
+        players = new address[](n);
+
+        for (uint256 i; i < n; ) {
+            players[i] = _recordSingleSettlement(
+                token,
+                actionKeys[i],
+                roundKeys[i],
+                payouts[i]
+            );
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    function _recordSingleSettlement(
+        address token,
+        bytes32 actionKey,
+        bytes32 roundKey,
+        uint256 payout
+    ) internal returns (address player) {
+        require(!actionUsed[actionKey], "DUP_ACTION");
+
+        actionUsed[actionKey] = true;
+
+        Round storage r = rounds[roundKey];
+
+        require(r.player != address(0), "ROUND_NOT_FOUND");
+        require(r.token == token, "TOKEN_MISMATCH");
+        require(payout <= r.totalStake * maxPayoutMultiplierX, "PAYOUT_LIMIT");
+
+        r.closedAt = block.timestamp;
+
+        player = r.player;
+
+        emit BetSettled(actionKey, roundKey, player, token, payout);
+    }
+
+    function _processBatchPayouts(
+        address token,
+        address[] memory players,
+        uint256[] calldata payouts
+    ) internal {
+        address _bankroll = bankroll;
+        uint256 n = payouts.length;
+
+        for (uint256 i; i < n; ) {
+            uint256 payout = payouts[i];
+
+            if (payout > 0) {
+                try
+                    IBankLP(_bankroll).transferPayout(
+                        players[i],
+                        payout,
+                        token
+                    )
+                {
+                    // success
+                } catch {
+                    _recordPendingPayout(players[i], token, payout);
+                }
+            }
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    function _recordPendingPayout(
+        address player,
+        address token,
+        uint256 amount
+    ) internal {
+        pendingWithdrawals[player][token] += amount;
+        totalPendingWithdrawalsByToken[token] += amount;
+
+        emit PendingPayoutRecorded(player, token, amount);
+    }
+
+    // -------------------------------------------------------------------------
+    // Emergency
+    // -------------------------------------------------------------------------
+
+    /// @notice Recovers any ETH accidentally sent directly to this contract.
+    /// @dev Normal game funds should live in BankLP; this ledger should hold zero ETH.
+    function emergencyWithdraw(address token) external nonReentrant onlyOwner {
+        if (token != address(0)) {
+            uint256 tokenBalance = IERC20(token).balanceOf(address(this));
+            require(tokenBalance > 0, "ZERO");
+
+            IERC20(token).safeTransfer(owner, tokenBalance);
+
+            emit EmergencyWithdraw(token, tokenBalance);
+            return;
+        }
+
         uint256 amount = address(this).balance;
         require(amount > 0, "ZERO");
 
         (bool ok, ) = owner.call{value: amount}("");
         require(ok, "WITHDRAW_FAIL");
 
-        emit EmergencyWithdraw(amount);
+        emit EmergencyWithdraw(address(0), amount);
     }
 
-    /// @notice Accepts direct ETH transfers to the contract
     receive() external payable {}
 }

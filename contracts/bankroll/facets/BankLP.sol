@@ -21,6 +21,8 @@ interface IToken is IERC20 {
 contract BankLP is WithStorage {
     using SafeERC20 for IERC20;
 
+    uint256 public constant NATIVE_PAYOUT_GAS = 30_000;
+
     address public owner;
     address public registry; // Immutable registry for historical tracking
 
@@ -439,20 +441,19 @@ contract BankLP is WithStorage {
             bool transferred = IERC20(tokenAddress).transfer(player, payout);
             require(transferred, "ERC20: Transfer failed");
         } else {
-            (bool success, ) = payable(player).call{value: payout}(
-                ""
-            );
+            (bool success, ) = payable(player).call{value: payout, gas: NATIVE_PAYOUT_GAS}("");
             if (!success) {
-                (bool _success, ) = gs().wrappedToken.call{value: payout}(
-                    abi.encodeWithSignature("deposit()")
-                );
-                if (!_success) {
-                    revert();
+                address wrappedToken = gs().wrappedToken;
+                if (wrappedToken == address(0)) {
+                    revert InvalidTokenStandard(wrappedToken);
                 }
 
-                bool transferred = IERC20(gs().wrappedToken).transfer(player, payout);
-                require(transferred, "IERC20: Transfer failed");
+                (bool _success, ) = wrappedToken.call{value: payout}(abi.encodeWithSignature("deposit()"));
+                if (!_success) {
+                    revert TransferFailed();
+                }
 
+                IERC20(wrappedToken).safeTransfer(player, payout);
             }
         }
 

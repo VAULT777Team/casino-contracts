@@ -90,6 +90,14 @@ contract RejectETH {
     }
 }
 
+contract ExhaustGas {
+    receive() external payable {
+        assembly {
+            for {} 1 {} {}
+        }
+    }
+}
+
 contract BankLPTest is Test {
     BankLP public bankroll;
     Treasury public treasury;
@@ -172,6 +180,17 @@ contract BankLPTest is Test {
 
         // Player rejected ETH, so they should receive WETH.
         assertEq(weth.balanceOf(address(rejector)), 1 ether);
+    }
+
+    function testTransferPayoutETHWrapsWhenPlayerExhaustsGas() public {
+        ExhaustGas gasBomb = new ExhaustGas();
+
+        vm.deal(address(bankroll), 10 ether);
+
+        vm.prank(game);
+        bankroll.transferPayout(address(gasBomb), 1 ether, address(0));
+
+        assertEq(weth.balanceOf(address(gasBomb)), 1 ether);
     }
 
     function testReserveReleaseAndWithdrawRespectsReservedFunds() public {
