@@ -219,23 +219,58 @@ contract GameLedgerV3 is ReentrancyGuard {
         owner = newOwner;
     }
 
-    function setOperator(address operator) external onlyOwner {
+    function setOperator(
+        address operator,
+        bool enabled
+    ) external onlyOwner {
+        _setOperator(operator, enabled);
+    }
+
+    function setOperators(
+        address[] calldata operators,
+        bool[] calldata enabled
+    ) external onlyOwner {
+        _setOperators(operators, enabled);
+    }
+
+    function _setOperators(
+        address[] calldata operators,
+        bool[] calldata enabled
+    ) internal {
+        uint256 n = operators.length;
+        require(n != 0, "EMPTY_OPERATORS");
+        require(n == enabled.length, "LENGTH_MISMATCH");
+
+        for (uint256 i; i < n; ) {
+            _setOperator(operators[i], enabled[i]);
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    function _setOperator(address operator, bool enabled) internal {
         require(operator != address(0), "ZERO_OPERATOR");
 
-        isOperator[operator] = true;
-        emit OperatorUpdated(operator, true);
+        isOperator[operator] = enabled;
+        emit OperatorUpdated(operator, enabled);
     }
 
-    function setOperators(address[] calldata operators) external onlyOwner {
-        uint256 n = operators.length;
+    function setAdmin(address admin, bool enabled) external onlyOwner {
+        _setAdmin(admin, enabled);
+    }
+
+    function setAdmins(
+        address[] calldata admins,
+        bool[] calldata enabled
+    ) external onlyOwner {
+        uint256 n = admins.length;
+        require(n != 0, "EMPTY_ADMINS");
+        require(n == enabled.length, "LENGTH_MISMATCH");
 
         for (uint256 i; i < n; ) {
-            address operator = operators[i];
-
-            require(operator != address(0), "ZERO_OPERATOR");
-
-            isOperator[operator] = true;
-            emit OperatorUpdated(operator, true);
+            _setAdmin(admins[i], enabled[i]);
 
             unchecked {
                 ++i;
@@ -243,36 +278,11 @@ contract GameLedgerV3 is ReentrancyGuard {
         }
     }
 
-    function removeOperator(address operator) external onlyOwner {
-        isOperator[operator] = false;
-        emit OperatorUpdated(operator, false);
-    }
-
-    function removeOperators(address[] calldata operators) external onlyOwner {
-        uint256 n = operators.length;
-
-        for (uint256 i; i < n; ) {
-            address operator = operators[i];
-
-            isOperator[operator] = false;
-            emit OperatorUpdated(operator, false);
-
-            unchecked {
-                ++i;
-            }
-        }
-    }
-
-    function setAdmin(address admin) external onlyOwner {
+    function _setAdmin(address admin, bool enabled) internal {
         require(admin != address(0), "ZERO_ADMIN");
 
-        isAdmin[admin] = true;
-        emit AdminUpdated(admin, true);
-    }
-
-    function removeAdmin(address admin) external onlyOwner {
-        isAdmin[admin] = false;
-        emit AdminUpdated(admin, false);
+        isAdmin[admin] = enabled;
+        emit AdminUpdated(admin, enabled);
     }
 
     function setRegistry(address _registry) external onlyOwnerOrAdmin {

@@ -45,6 +45,8 @@ contract GameLedgerRegistryMock {
 }
 
 contract GameLedgerTest is Test {
+    event OperatorUpdated(address indexed operator, bool allowed);
+
     GameLedgerV3 internal ledger;
     GameLedgerBankrollMock internal bankroll;
 
@@ -61,6 +63,108 @@ contract GameLedgerTest is Test {
 
         vm.deal(address(this), 100 ether);
         vm.deal(address(bankroll), 100 ether);
+    }
+
+    function testBooleanSetOperatorEnablesAndRevokes() public {
+        address operator = address(0xCAFE);
+
+        vm.expectEmit(true, false, false, true);
+        emit OperatorUpdated(operator, true);
+        ledger.setOperator(operator, true);
+        assertTrue(ledger.isOperator(operator));
+
+        vm.expectEmit(true, false, false, true);
+        emit OperatorUpdated(operator, false);
+        ledger.setOperator(operator, false);
+        assertFalse(ledger.isOperator(operator));
+    }
+
+    function testBooleanSetOperatorRequiresOwner() public {
+        vm.prank(address(0xBAD));
+        vm.expectRevert(bytes("NOT_OWNER"));
+        ledger.setOperator(address(0xCAFE), false);
+    }
+
+    function testBooleanSetOperatorRejectsZeroAddress() public {
+        vm.expectRevert(bytes("ZERO_OPERATOR"));
+        ledger.setOperator(address(0), false);
+    }
+
+    function testBooleanSetOperatorsEnablesAndRevokesAtomically() public {
+        address[] memory operators = new address[](3);
+        operators[0] = address(0xCAFE);
+        operators[1] = address(0xF00D);
+        operators[2] = address(0xD00D);
+        bool[] memory enabled = new bool[](3);
+        enabled[0] = true;
+        enabled[1] = false;
+        enabled[2] = true;
+
+        ledger.setOperators(operators, enabled);
+        assertTrue(ledger.isOperator(operators[0]));
+        assertFalse(ledger.isOperator(operators[1]));
+        assertTrue(ledger.isOperator(operators[2]));
+
+        for (uint256 i; i < enabled.length; ++i) enabled[i] = false;
+        ledger.setOperators(operators, enabled);
+        for (uint256 i; i < operators.length; ++i) {
+            assertFalse(ledger.isOperator(operators[i]));
+        }
+    }
+
+    function testBooleanSetOperatorsRejectsEmptyAndRollsBackZeroAddress() public {
+        address[] memory empty = new address[](0);
+        bool[] memory emptyEnabled = new bool[](0);
+        vm.expectRevert(bytes("EMPTY_OPERATORS"));
+        ledger.setOperators(empty, emptyEnabled);
+
+        address[] memory operators = new address[](2);
+        operators[0] = address(0xCAFE);
+        operators[1] = address(0);
+        bool[] memory enabled = new bool[](2);
+        enabled[0] = true;
+        enabled[1] = true;
+
+        vm.expectRevert(bytes("ZERO_OPERATOR"));
+        ledger.setOperators(operators, enabled);
+        assertFalse(ledger.isOperator(operators[0]));
+
+        bool[] memory mismatched = new bool[](1);
+        vm.expectRevert(bytes("LENGTH_MISMATCH"));
+        ledger.setOperators(operators, mismatched);
+    }
+
+    function testBooleanAdminSettersSupportMixedBatchStates() public {
+        address[] memory admins = new address[](2);
+        admins[0] = address(0x2001);
+        admins[1] = address(0x2002);
+        bool[] memory enabled = new bool[](2);
+        enabled[0] = true;
+        enabled[1] = false;
+
+        ledger.setAdmins(admins, enabled);
+        assertTrue(ledger.isAdmin(admins[0]));
+        assertFalse(ledger.isAdmin(admins[1]));
+
+        ledger.setAdmin(admins[0], false);
+        assertFalse(ledger.isAdmin(admins[0]));
+    }
+
+    function testBooleanAdminBatchRejectsInvalidArraysAtomically() public {
+        address[] memory admins = new address[](2);
+        admins[0] = address(0x2001);
+        admins[1] = address(0);
+        bool[] memory enabled = new bool[](2);
+        enabled[0] = true;
+        enabled[1] = true;
+
+        vm.expectRevert(bytes("ZERO_ADMIN"));
+        ledger.setAdmins(admins, enabled);
+        assertFalse(ledger.isAdmin(admins[0]));
+
+        bool[] memory mismatched = new bool[](1);
+        vm.expectRevert(bytes("LENGTH_MISMATCH"));
+        ledger.setAdmins(admins, mismatched);
     }
 
     function testMultipleSettlementsShareOneCumulativePayoutLimit() public {

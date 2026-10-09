@@ -195,6 +195,7 @@ GPL-3.0
 
 - [Documentation](./deployments.md)
 - [Deployed Contracts](./deployments.md#deployed-contract-addresses)
+- [Provider GameLedger Operator Upgrade](./docs/provider-game-ledger-operator-upgrade.md)
 - [Example Environment](./.env.example)
 - [Arbitrum Sepolia Environment](./.env.arb-sepolia)
 

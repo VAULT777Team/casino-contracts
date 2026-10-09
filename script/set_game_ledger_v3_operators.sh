@@ -22,8 +22,16 @@ if [[ -z "${PRIVATE_KEY}" ]]; then
     exit 1
 fi
 
+ENABLED=true
+if [[ "${1:-}" == "--disable" ]]; then
+    ENABLED=false
+    shift
+elif [[ "${1:-}" == "--enable" ]]; then
+    shift
+fi
+
 if (( $# == 0 )); then
-    echo "Usage: $0 <operator-address> [operator-address ...]" >&2
+    echo "Usage: $0 [--enable|--disable] <operator-address> [operator-address ...]" >&2
     exit 1
 fi
 
@@ -53,35 +61,34 @@ if [[ "${SENDER,,}" != "${OWNER,,}" ]]; then
     exit 1
 fi
 
-OPERATORS_ARGUMENT="[$(IFS=,; echo "${OPERATORS[*]}")]"
-
-echo "Adding ${#OPERATORS[@]} operator(s) to GameLedgerV3 ${GAME_LEDGER_V3_ADDRESS}"
-
-CAST_ARGS=(
-    "${GAME_LEDGER_V3_ADDRESS}"
-    "setOperators(address[])"
-    "${OPERATORS_ARGUMENT}"
-    --private-key "${PRIVATE_KEY}"
-    --rpc-url "${RPC_URL}"
-)
-
-if [[ -n "${CHAIN_ID:-}" ]]; then
-    CAST_ARGS+=(--chain "${CHAIN_ID}")
-fi
-
-cast send "${CAST_ARGS[@]}"
+echo "Setting ${#OPERATORS[@]} GameLedgerV3 operator(s) enabled=${ENABLED} on ${GAME_LEDGER_V3_ADDRESS}"
 
 for operator in "${OPERATORS[@]}"; do
-    enabled="$(cast call \
+    CAST_ARGS=(
+        "${GAME_LEDGER_V3_ADDRESS}"
+        "setOperator(address,bool)"
+        "${operator}"
+        "${ENABLED}"
+        --private-key "${PRIVATE_KEY}"
+        --rpc-url "${RPC_URL}"
+    )
+
+    if [[ -n "${CHAIN_ID:-}" ]]; then
+        CAST_ARGS+=(--chain "${CHAIN_ID}")
+    fi
+
+    cast send "${CAST_ARGS[@]}"
+
+    actual_enabled="$(cast call \
         "${GAME_LEDGER_V3_ADDRESS}" \
         "isOperator(address)(bool)" \
         "${operator}" \
         --rpc-url "${RPC_URL}")"
 
-    if [[ "${enabled}" != "true" ]]; then
-        echo "Operator verification failed: ${operator}" >&2
+    if [[ "${actual_enabled}" != "${ENABLED}" ]]; then
+        echo "Operator verification failed for ${operator}: expected ${ENABLED}, got ${actual_enabled}" >&2
         exit 1
     fi
 done
 
-echo "All operators are enabled."
+echo "All operator states verified."
