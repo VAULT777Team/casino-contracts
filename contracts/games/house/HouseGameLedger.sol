@@ -310,6 +310,44 @@ contract HouseGameLedger is ReentrancyGuard {
         IBankLP(bankroll).reserveFunds(token, totalBankrollReservation);
     }
 
+    /// @notice Reserves ERC-20-funded rounds submitted by an authorized operator for explicit players.
+    /// @dev Players and reservations are aligned one-to-one. Each player must approve this ledger
+    ///      for the corresponding reservation amount.
+    function reserveBatchFor(address token, address[] calldata players, Reservation[] calldata reservations)
+        external
+        onlyOperator
+        nonReentrant
+        whenNotPaused
+    {
+        uint256 count = reservations.length;
+        if (count == 0 || players.length != count) revert BatchLengthMismatch();
+        if (token == address(0)) revert NativeValueNotAllowed();
+
+        address bankroll = _currentBankroll(token);
+        uint256 totalReservation;
+        uint256 totalBankrollReservation;
+
+        for (uint256 i; i < count;) {
+            address player = players[i];
+            if (player == address(0)) revert ZeroAddress();
+
+            (uint256 reservationAmount, uint256 riskReservation) =
+                _recordReservation(player, token, bankroll, reservations[i]);
+            IERC20(token).safeTransferFrom(player, address(this), reservationAmount);
+            totalReservation += reservationAmount;
+            totalBankrollReservation += riskReservation;
+
+            unchecked {
+                ++i;
+            }
+        }
+
+        IERC20(token).safeApprove(bankroll, 0);
+        IERC20(token).safeApprove(bankroll, totalReservation);
+        IBankLP(bankroll).deposit(token, totalReservation);
+        IBankLP(bankroll).reserveFunds(token, totalBankrollReservation);
+    }
+
     function _validateReservationSignature(
         address token,
         Reservation[] calldata reservations,

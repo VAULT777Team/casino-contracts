@@ -18,14 +18,20 @@ bindings, signed maximum payouts, and final settlement.
    wager principal therefore always comes from the smart account, while the
    operator covers transaction gas and no wallet prompt is required
    for each play.
-4. Funds are deposited into the current registry bankroll. The maximum
-   signed payout is reserved in that bankroll.
-5. Before outcomes are put in calldata, the operator calls
+4. ERC-20-only managed play can instead use
+   `reserveBatchFor(address token,address[] players,Reservation[] reservations)`.
+   An authorized operator submits the batch without a signature or deadline,
+   but each explicit player funds their aligned reservation through an ERC-20
+   allowance to the ledger. Native token reservations are rejected, so the
+   operator pays gas only and never supplies wager principal.
+5. Funds are deposited into the current registry bankroll. The declared
+   maximum payout is reserved in that bankroll.
+6. Before outcomes are put in calldata, the operator calls
    `initiateSettlementBatch` with the round keys, their already-derived
    settlement action keys, and an expiry. This outcome-free transaction blocks
    player cancellation for 1–30 minutes. A round can only be initiated once,
    so an operator cannot keep renewing a stale lock.
-6. After initiation confirms, the operator calls `settleBatch`. Every item must explicitly set
+7. After initiation confirms, the operator calls `settleBatch`. Every item must explicitly set
    `finalClose`, `actualWager <= reservation`, and `grossPlayerReturn` must
    include all unused reservation:
 
@@ -33,7 +39,7 @@ bindings, signed maximum payouts, and final settlement.
 
    The return is also bounded by the immutable maximum payout signed during
    reservation. Closed/cancelled rounds cannot be changed.
-7. Failed bankroll payouts become player-claimable pending payouts. Their
+8. Failed bankroll payouts become player-claimable pending payouts. Their
    funds remain reserved at the original bankroll until `claimPending`
    succeeds.
 

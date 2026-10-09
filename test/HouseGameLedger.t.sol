@@ -568,6 +568,158 @@ contract HouseGameLedgerTest is Test {
         assertEq(bankroll.reservedFunds(address(token)), 0);
     }
 
+    function testOperatorCanReserveRepeatedPlayerErc20Batch() public {
+        uint256 playerStart = token.balanceOf(PLAYER);
+        HouseGameLedger.Reservation[] memory reservations = new HouseGameLedger.Reservation[](2);
+        reservations[0] = HouseGameLedger.Reservation({
+            gameId: GAME_ID,
+            actionKey: keccak256("operator-repeat-action-one"),
+            roundKey: keccak256("operator-repeat-round-one"),
+            amount: 2 ether,
+            maxPayout: 8 ether
+        });
+        reservations[1] = HouseGameLedger.Reservation({
+            gameId: PLINKO_ID,
+            actionKey: keccak256("operator-repeat-action-two"),
+            roundKey: keccak256("operator-repeat-round-two"),
+            amount: 3 ether,
+            maxPayout: 12 ether
+        });
+        address[] memory players = new address[](2);
+        players[0] = PLAYER;
+        players[1] = PLAYER;
+
+        vm.prank(operator);
+        ledger.reserveBatchFor(address(token), players, reservations);
+
+        assertEq(token.balanceOf(PLAYER), playerStart - 5 ether);
+        assertEq(token.balanceOf(operator), 0);
+        assertEq(token.balanceOf(address(bankroll)), 20_005 ether);
+        assertEq(bankroll.reservedFunds(address(token)), 20 ether);
+        HouseGameLedger.Round memory first = ledger.getRound(reservations[0].roundKey);
+        HouseGameLedger.Round memory second = ledger.getRound(reservations[1].roundKey);
+        assertEq(first.player, PLAYER);
+        assertEq(first.gameId, GAME_ID);
+        assertEq(first.reservation, 2 ether);
+        assertEq(second.player, PLAYER);
+        assertEq(second.gameId, PLINKO_ID);
+        assertEq(second.reservation, 3 ether);
+    }
+
+    function testOperatorCanReserveForMultiplePlayers() public {
+        HouseGameLedger.Reservation[] memory reservations = new HouseGameLedger.Reservation[](2);
+        reservations[0] = HouseGameLedger.Reservation({
+            gameId: GAME_ID,
+            actionKey: keccak256("operator-multi-action-one"),
+            roundKey: keccak256("operator-multi-round-one"),
+            amount: 4 ether,
+            maxPayout: 10 ether
+        });
+        reservations[1] = HouseGameLedger.Reservation({
+            gameId: GAME_ID,
+            actionKey: keccak256("operator-multi-action-two"),
+            roundKey: keccak256("operator-multi-round-two"),
+            amount: 6 ether,
+            maxPayout: 15 ether
+        });
+        address[] memory players = new address[](2);
+        players[0] = PLAYER;
+        players[1] = OTHER_PLAYER;
+
+        vm.prank(operator);
+        ledger.reserveBatchFor(address(token), players, reservations);
+
+        assertEq(token.balanceOf(PLAYER), 96 ether);
+        assertEq(token.balanceOf(OTHER_PLAYER), 94 ether);
+        assertEq(ledger.getRound(reservations[0].roundKey).player, PLAYER);
+        assertEq(ledger.getRound(reservations[1].roundKey).player, OTHER_PLAYER);
+        assertEq(bankroll.reservedFunds(address(token)), 25 ether);
+    }
+
+    function testReserveBatchForIsOperatorOnly() public {
+        HouseGameLedger.Reservation[] memory reservations =
+            _oneReservation(GAME_ID, keccak256("unauthorized-action"), keccak256("unauthorized-round"), 1 ether);
+        address[] memory players = _onePlayer(PLAYER);
+
+        vm.expectRevert(HouseGameLedger.NotOperator.selector);
+        ledger.reserveBatchFor(address(token), players, reservations);
+    }
+
+    function testReserveBatchForRejectsNativeToken() public {
+        HouseGameLedger.Reservation[] memory reservations =
+            _oneReservation(GAME_ID, keccak256("native-for-action"), keccak256("native-for-round"), 1 ether);
+
+        vm.prank(operator);
+        vm.expectRevert(HouseGameLedger.NativeValueNotAllowed.selector);
+        ledger.reserveBatchFor(address(0), _onePlayer(PLAYER), reservations);
+    }
+
+    function testReserveBatchForRejectsEmptyAndMismatchedLengths() public {
+        HouseGameLedger.Reservation[] memory emptyReservations = new HouseGameLedger.Reservation[](0);
+        address[] memory emptyPlayers = new address[](0);
+        vm.prank(operator);
+        vm.expectRevert(HouseGameLedger.BatchLengthMismatch.selector);
+        ledger.reserveBatchFor(address(token), emptyPlayers, emptyReservations);
+
+        HouseGameLedger.Reservation[] memory reservations =
+            _oneReservation(GAME_ID, keccak256("length-action"), keccak256("length-round"), 1 ether);
+        vm.prank(operator);
+        vm.expectRevert(HouseGameLedger.BatchLengthMismatch.selector);
+        ledger.reserveBatchFor(address(token), emptyPlayers, reservations);
+    }
+
+    function testReserveBatchForRejectsZeroPlayer() public {
+        HouseGameLedger.Reservation[] memory reservations =
+            _oneReservation(GAME_ID, keccak256("zero-player-action"), keccak256("zero-player-round"), 1 ether);
+
+        vm.prank(operator);
+        vm.expectRevert(HouseGameLedger.ZeroAddress.selector);
+        ledger.reserveBatchFor(address(token), _onePlayer(address(0)), reservations);
+    }
+
+    function testReserveBatchForRevertsAtomicallyOnInsufficientAllowance() public {
+        HouseGameLedger.Reservation[] memory reservations =
+            _oneReservation(GAME_ID, keccak256("allowance-action"), keccak256("allowance-round"), 2 ether);
+        vm.prank(PLAYER);
+        token.approve(address(ledger), 1 ether);
+
+        vm.prank(operator);
+        vm.expectRevert();
+        ledger.reserveBatchFor(address(token), _onePlayer(PLAYER), reservations);
+
+        assertEq(uint256(ledger.getRoundStatus(reservations[0].roundKey)), uint256(HouseGameLedger.RoundStatus.None));
+        assertFalse(ledger.actionUsed(reservations[0].actionKey));
+        assertEq(token.balanceOf(PLAYER), 100 ether);
+    }
+
+    function testReserveBatchForRevertsAtomicallyOnInsufficientBalance() public {
+        address unfundedPlayer = address(0xD00D);
+        vm.prank(unfundedPlayer);
+        token.approve(address(ledger), type(uint256).max);
+        HouseGameLedger.Reservation[] memory reservations =
+            _oneReservation(GAME_ID, keccak256("balance-action"), keccak256("balance-round"), 1 ether);
+
+        vm.prank(operator);
+        vm.expectRevert();
+        ledger.reserveBatchFor(address(token), _onePlayer(unfundedPlayer), reservations);
+
+        assertEq(uint256(ledger.getRoundStatus(reservations[0].roundKey)), uint256(HouseGameLedger.RoundStatus.None));
+        assertFalse(ledger.actionUsed(reservations[0].actionKey));
+    }
+
+    function testExistingReserveBatchStillSupportsNativePlayerFunding() public {
+        HouseGameLedger.Reservation[] memory reservations =
+            _oneReservation(GAME_ID, keccak256("legacy-native-action"), keccak256("legacy-native-round"), 2 ether);
+
+        _reserveNative(PLAYER, reservations);
+
+        HouseGameLedger.Round memory round = ledger.getRound(reservations[0].roundKey);
+        assertEq(round.player, PLAYER);
+        assertEq(round.token, address(0));
+        assertEq(round.reservation, 2 ether);
+        assertEq(address(bankroll).balance, 20_002 ether);
+    }
+
     function testPayoutFailureBecomesPendingAndKeepsFundsReserved() public {
         bytes32 roundKey = keccak256("pending-round");
         _reserveNative(PLAYER, _oneReservation(GAME_ID, keccak256("pending-reserve"), roundKey, 2 ether));
@@ -602,6 +754,10 @@ contract HouseGameLedgerTest is Test {
         vm.prank(PLAYER);
         ledger.reserveBatch{value: 1 ether}(address(0), pausedReservation, deadline, signature);
 
+        vm.expectRevert(HouseGameLedger.Paused.selector);
+        vm.prank(operator);
+        ledger.reserveBatchFor(address(token), _onePlayer(PLAYER), pausedReservation);
+
         _settle(keccak256("pause-settle"), roundKey, 1 ether, 1 ether, true);
     }
 
@@ -635,6 +791,11 @@ contract HouseGameLedgerTest is Test {
         items[0] = HouseGameLedger.Reservation({
             gameId: gameId, actionKey: actionKey, roundKey: roundKey, amount: amount, maxPayout: amount * 5
         });
+    }
+
+    function _onePlayer(address player) internal pure returns (address[] memory players) {
+        players = new address[](1);
+        players[0] = player;
     }
 
     function _reserveNative(address player, HouseGameLedger.Reservation[] memory reservations) internal {
