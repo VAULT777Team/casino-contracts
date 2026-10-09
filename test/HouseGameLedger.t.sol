@@ -201,16 +201,13 @@ contract HouseGameLedgerTest is Test {
     function testDuplicateReservationActionIsRejected() public {
         HouseGameLedger.Reservation[] memory first =
             _oneReservation(GAME_ID, keccak256("reserve-action"), keccak256("round-one"), 1 ether);
-        _reserveNative(PLAYER, first);
+        _reserveFor(PLAYER, first);
 
         HouseGameLedger.Reservation[] memory duplicate =
             _oneReservation(GAME_ID, keccak256("reserve-action"), keccak256("round-two"), 1 ether);
-        uint256 deadline = block.timestamp + 1 hours;
-        bytes memory signature = _sign(PLAYER, address(0), duplicate, deadline);
-
         vm.expectRevert(abi.encodeWithSelector(HouseGameLedger.DuplicateAction.selector, keccak256("reserve-action")));
-        vm.prank(PLAYER);
-        ledger.reserveBatch{value: 1 ether}(address(0), duplicate, deadline, signature);
+        vm.prank(operator);
+        ledger.reserveBatchFor(address(token), _onePlayer(PLAYER), duplicate);
     }
 
     function testDuplicateSettlementActionRevertsWholeBatch() public {
@@ -229,7 +226,7 @@ contract HouseGameLedgerTest is Test {
             amount: 1 ether,
             maxPayout: 5 ether
         });
-        _reserveNative(PLAYER, reservations);
+        _reserveFor(PLAYER, reservations);
 
         bytes32 duplicateAction = keccak256("duplicate-settlement");
         HouseGameLedger.Settlement[] memory settlements = new HouseGameLedger.Settlement[](2);
@@ -270,24 +267,9 @@ contract HouseGameLedgerTest is Test {
         assertFalse(ledger.actionUsed(duplicateAction));
     }
 
-    function testReservationSignatureBindsPlayerAndToken() public {
-        HouseGameLedger.Reservation[] memory reservations =
-            _oneReservation(GAME_ID, keccak256("bound-action"), keccak256("bound-round"), 1 ether);
-        uint256 deadline = block.timestamp + 1 hours;
-        bytes memory playerSignature = _sign(PLAYER, address(0), reservations, deadline);
-
-        vm.prank(OTHER_PLAYER);
-        vm.expectRevert(HouseGameLedger.InvalidOperatorSignature.selector);
-        ledger.reserveBatch{value: 1 ether}(address(0), reservations, deadline, playerSignature);
-
-        vm.prank(PLAYER);
-        vm.expectRevert(HouseGameLedger.InvalidOperatorSignature.selector);
-        ledger.reserveBatch(address(token), reservations, deadline, playerSignature);
-    }
-
     function testRoundFinalityRejectsPostCloseActions() public {
         bytes32 roundKey = keccak256("final-round");
-        _reserveNative(PLAYER, _oneReservation(GAME_ID, keccak256("final-reserve"), roundKey, 2 ether));
+        _reserveFor(PLAYER, _oneReservation(GAME_ID, keccak256("final-reserve"), roundKey, 2 ether));
         _settle(keccak256("final-settle"), roundKey, 2 ether, 3 ether, true);
 
         assertEq(uint256(ledger.getRoundStatus(roundKey)), uint256(HouseGameLedger.RoundStatus.Closed));
@@ -301,16 +283,14 @@ contract HouseGameLedgerTest is Test {
 
         HouseGameLedger.Reservation[] memory duplicateRound =
             _oneReservation(GAME_ID, keccak256("post-close-reserve"), roundKey, 1 ether);
-        uint256 deadline = block.timestamp + 1 hours;
-        bytes memory signature = _sign(PLAYER, address(0), duplicateRound, deadline);
         vm.expectRevert(abi.encodeWithSelector(HouseGameLedger.RoundAlreadyExists.selector, roundKey));
-        vm.prank(PLAYER);
-        ledger.reserveBatch{value: 1 ether}(address(0), duplicateRound, deadline, signature);
+        vm.prank(operator);
+        ledger.reserveBatchFor(address(token), _onePlayer(PLAYER), duplicateRound);
     }
 
     function testSettlementRequiresExplicitFinalClose() public {
         bytes32 roundKey = keccak256("non-final-round");
-        _reserveNative(PLAYER, _oneReservation(GAME_ID, keccak256("non-final-reserve"), roundKey, 1 ether));
+        _reserveFor(PLAYER, _oneReservation(GAME_ID, keccak256("non-final-reserve"), roundKey, 1 ether));
 
         bytes32 actionKey = keccak256("non-final-settle");
         _initiate(keccak256("non-final-initiation"), roundKey, actionKey, block.timestamp + 5 minutes);
@@ -320,7 +300,7 @@ contract HouseGameLedgerTest is Test {
 
     function testActualWagerCannotExceedReservation() public {
         bytes32 roundKey = keccak256("wager-limit-round");
-        _reserveNative(PLAYER, _oneReservation(GAME_ID, keccak256("wager-limit-reserve"), roundKey, 1 ether));
+        _reserveFor(PLAYER, _oneReservation(GAME_ID, keccak256("wager-limit-reserve"), roundKey, 1 ether));
 
         bytes32 actionKey = keccak256("wager-limit-settle");
         _initiate(keccak256("wager-limit-initiation"), roundKey, actionKey, block.timestamp + 5 minutes);
@@ -330,7 +310,7 @@ contract HouseGameLedgerTest is Test {
 
     function testUnusedReservationMustBeIncludedInGrossReturn() public {
         bytes32 roundKey = keccak256("unused-round");
-        _reserveNative(PLAYER, _oneReservation(GAME_ID, keccak256("unused-reserve"), roundKey, 2 ether));
+        _reserveFor(PLAYER, _oneReservation(GAME_ID, keccak256("unused-reserve"), roundKey, 2 ether));
 
         bytes32 actionKey = keccak256("unused-settle");
         _initiate(keccak256("unused-initiation"), roundKey, actionKey, block.timestamp + 5 minutes);
@@ -343,15 +323,15 @@ contract HouseGameLedgerTest is Test {
         HouseGameLedger.Reservation[] memory winning =
             _oneReservation(PLINKO_ID, keccak256("plinko-winning-reserve"), winningRound, 1 ether);
         winning[0].maxPayout = 1_000 ether;
-        _reserveNative(PLAYER, winning);
+        _reserveFor(PLAYER, winning);
         _settle(keccak256("plinko-winning-settle"), winningRound, 1 ether, 1_000 ether, true);
-        assertEq(PLAYER.balance, 1_099 ether);
+        assertEq(token.balanceOf(PLAYER), 1_099 ether);
 
         bytes32 excessiveRound = keccak256("plinko-excessive-round");
         HouseGameLedger.Reservation[] memory excessive =
             _oneReservation(PLINKO_ID, keccak256("plinko-excessive-reserve"), excessiveRound, 1 ether);
         excessive[0].maxPayout = 1_000 ether;
-        _reserveNative(PLAYER, excessive);
+        _reserveFor(PLAYER, excessive);
         bytes32 actionKey = keccak256("plinko-excessive-settle");
         _initiate(keccak256("plinko-excessive-initiation"), excessiveRound, actionKey, block.timestamp + 5 minutes);
         vm.expectRevert(HouseGameLedger.PayoutLimitExceeded.selector);
@@ -360,7 +340,7 @@ contract HouseGameLedgerTest is Test {
 
     function testPlayerCanCancelAfterRefundDelay() public {
         bytes32 roundKey = keccak256("cancel-round");
-        _reserveNative(PLAYER, _oneReservation(GAME_ID, keccak256("cancel-reserve"), roundKey, 3 ether));
+        _reserveFor(PLAYER, _oneReservation(GAME_ID, keccak256("cancel-reserve"), roundKey, 3 ether));
 
         vm.prank(PLAYER);
         vm.expectRevert(
@@ -372,7 +352,7 @@ contract HouseGameLedgerTest is Test {
         vm.prank(PLAYER);
         ledger.cancelRound(keccak256("cancel-action"), roundKey);
 
-        assertEq(PLAYER.balance, 100 ether);
+        assertEq(token.balanceOf(PLAYER), 100 ether);
         assertEq(uint256(ledger.getRoundStatus(roundKey)), uint256(HouseGameLedger.RoundStatus.Cancelled));
 
         vm.prank(operator);
@@ -387,7 +367,7 @@ contract HouseGameLedgerTest is Test {
     function testPlayerCannotCancelAfterSettlementInitiation() public {
         bytes32 roundKey = keccak256("locked-round");
         bytes32 settlementAction = keccak256("locked-settlement");
-        _reserveNative(PLAYER, _oneReservation(GAME_ID, keccak256("locked-reserve"), roundKey, 3 ether));
+        _reserveFor(PLAYER, _oneReservation(GAME_ID, keccak256("locked-reserve"), roundKey, 3 ether));
         vm.warp(block.timestamp + 10 minutes);
         _initiate(keccak256("locked-initiation"), roundKey, settlementAction, block.timestamp + 5 minutes);
 
@@ -404,7 +384,7 @@ contract HouseGameLedgerTest is Test {
 
     function testExpiredSettlementLockAllowsPlayerRecoveryAndCannotBeRenewed() public {
         bytes32 roundKey = keccak256("stale-lock-round");
-        _reserveNative(PLAYER, _oneReservation(GAME_ID, keccak256("stale-lock-reserve"), roundKey, 3 ether));
+        _reserveFor(PLAYER, _oneReservation(GAME_ID, keccak256("stale-lock-reserve"), roundKey, 3 ether));
         bytes32 expiry = bytes32(block.timestamp + 5 minutes);
         _initiate(keccak256("stale-lock-initiation"), roundKey, keccak256("stale-lock-settlement"), uint256(expiry));
         vm.warp(uint256(expiry) + 1);
@@ -425,7 +405,7 @@ contract HouseGameLedgerTest is Test {
 
     function testSettlementRequiresActiveMatchingInitiation() public {
         bytes32 roundKey = keccak256("init-required-round");
-        _reserveNative(PLAYER, _oneReservation(GAME_ID, keccak256("init-required-reserve"), roundKey, 1 ether));
+        _reserveFor(PLAYER, _oneReservation(GAME_ID, keccak256("init-required-reserve"), roundKey, 1 ether));
 
         HouseGameLedger.Settlement[] memory settlements = new HouseGameLedger.Settlement[](1);
         settlements[0] = HouseGameLedger.Settlement({
@@ -453,7 +433,7 @@ contract HouseGameLedgerTest is Test {
     function testSettlementFailsAfterLockExpiry() public {
         bytes32 roundKey = keccak256("expired-settlement-round");
         bytes32 settlementAction = keccak256("expired-settlement-action");
-        _reserveNative(PLAYER, _oneReservation(GAME_ID, keccak256("expired-settlement-reserve"), roundKey, 1 ether));
+        _reserveFor(PLAYER, _oneReservation(GAME_ID, keccak256("expired-settlement-reserve"), roundKey, 1 ether));
         uint256 expiresAt = block.timestamp + 1 minutes;
         _initiate(keccak256("expired-settlement-initiation"), roundKey, settlementAction, expiresAt);
         vm.warp(expiresAt + 1);
@@ -477,50 +457,6 @@ contract HouseGameLedgerTest is Test {
 
         vm.expectRevert(HouseGameLedger.RefundDelayTooShort.selector);
         new HouseGameLedger(address(this), operator, address(registry), 0);
-    }
-
-    function testNativeBatchReservationAndSettlement() public {
-        HouseGameLedger.Reservation[] memory reservations = new HouseGameLedger.Reservation[](2);
-        reservations[0] = HouseGameLedger.Reservation({
-            gameId: GAME_ID,
-            actionKey: keccak256("native-reserve-one"),
-            roundKey: keccak256("native-round-one"),
-            amount: 2 ether,
-            maxPayout: 10 ether
-        });
-        reservations[1] = HouseGameLedger.Reservation({
-            gameId: GAME_ID,
-            actionKey: keccak256("native-reserve-two"),
-            roundKey: keccak256("native-round-two"),
-            amount: 3 ether,
-            maxPayout: 15 ether
-        });
-        _reserveNative(PLAYER, reservations);
-
-        assertEq(address(bankroll).balance, 20_005 ether);
-        assertEq(bankroll.reservedFunds(address(0)), 25 ether);
-
-        HouseGameLedger.Settlement[] memory settlements = new HouseGameLedger.Settlement[](2);
-        settlements[0] = HouseGameLedger.Settlement({
-            actionKey: keccak256("native-settle-one"),
-            roundKey: reservations[0].roundKey,
-            actualWager: 1 ether,
-            grossPlayerReturn: 3 ether,
-            finalClose: true
-        });
-        settlements[1] = HouseGameLedger.Settlement({
-            actionKey: keccak256("native-settle-two"),
-            roundKey: reservations[1].roundKey,
-            actualWager: 2 ether,
-            grossPlayerReturn: 1 ether,
-            finalClose: true
-        });
-        _initiateBatch(keccak256("native-batch-initiation"), settlements, block.timestamp + 5 minutes);
-        vm.prank(operator);
-        ledger.settleBatch(settlements);
-
-        assertEq(PLAYER.balance, 99 ether);
-        assertEq(bankroll.reservedFunds(address(0)), 0);
     }
 
     function testErc20BatchReservationAndSettlement() public {
@@ -707,52 +643,36 @@ contract HouseGameLedgerTest is Test {
         assertFalse(ledger.actionUsed(reservations[0].actionKey));
     }
 
-    function testExistingReserveBatchStillSupportsNativePlayerFunding() public {
-        HouseGameLedger.Reservation[] memory reservations =
-            _oneReservation(GAME_ID, keccak256("legacy-native-action"), keccak256("legacy-native-round"), 2 ether);
-
-        _reserveNative(PLAYER, reservations);
-
-        HouseGameLedger.Round memory round = ledger.getRound(reservations[0].roundKey);
-        assertEq(round.player, PLAYER);
-        assertEq(round.token, address(0));
-        assertEq(round.reservation, 2 ether);
-        assertEq(address(bankroll).balance, 20_002 ether);
-    }
-
     function testPayoutFailureBecomesPendingAndKeepsFundsReserved() public {
         bytes32 roundKey = keccak256("pending-round");
-        _reserveNative(PLAYER, _oneReservation(GAME_ID, keccak256("pending-reserve"), roundKey, 2 ether));
+        _reserveFor(PLAYER, _oneReservation(GAME_ID, keccak256("pending-reserve"), roundKey, 2 ether));
         bankroll.setFailPayouts(true);
 
         _settle(keccak256("pending-settle"), roundKey, 1 ether, 3 ether, true);
 
-        (uint256 pendingAmount) = ledger.pendingPayouts(PLAYER, address(bankroll), address(0));
+        (uint256 pendingAmount) = ledger.pendingPayouts(PLAYER, address(bankroll), address(token));
         assertEq(pendingAmount, 3 ether);
-        assertEq(bankroll.reservedFunds(address(0)), 3 ether);
+        assertEq(bankroll.reservedFunds(address(token)), 3 ether);
 
         bankroll.setFailPayouts(false);
         vm.prank(PLAYER);
-        ledger.claimPending(address(bankroll), address(0));
+        ledger.claimPending(address(bankroll), address(token));
 
-        (pendingAmount) = ledger.pendingPayouts(PLAYER, address(bankroll), address(0));
+        (pendingAmount) = ledger.pendingPayouts(PLAYER, address(bankroll), address(token));
         assertEq(pendingAmount, 0);
-        assertEq(bankroll.reservedFunds(address(0)), 0);
-        assertEq(PLAYER.balance, 101 ether);
+        assertEq(bankroll.reservedFunds(address(token)), 0);
     }
 
     function testPauseBlocksReservationsButNotSettlementOrRefund() public {
         bytes32 roundKey = keccak256("pause-round");
-        _reserveNative(PLAYER, _oneReservation(GAME_ID, keccak256("pause-reserve"), roundKey, 1 ether));
+        _reserveFor(PLAYER, _oneReservation(GAME_ID, keccak256("pause-reserve"), roundKey, 1 ether));
         ledger.setPaused(true);
 
         HouseGameLedger.Reservation[] memory pausedReservation =
             _oneReservation(GAME_ID, keccak256("paused-new-reserve"), keccak256("paused-new-round"), 1 ether);
-        uint256 deadline = block.timestamp + 1 hours;
-        bytes memory signature = _sign(PLAYER, address(0), pausedReservation, deadline);
         vm.expectRevert(HouseGameLedger.Paused.selector);
-        vm.prank(PLAYER);
-        ledger.reserveBatch{value: 1 ether}(address(0), pausedReservation, deadline, signature);
+        vm.prank(operator);
+        ledger.reserveBatchFor(address(token), _onePlayer(PLAYER), pausedReservation);
 
         vm.expectRevert(HouseGameLedger.Paused.selector);
         vm.prank(operator);
@@ -761,21 +681,19 @@ contract HouseGameLedgerTest is Test {
         _settle(keccak256("pause-settle"), roundKey, 1 ether, 1 ether, true);
     }
 
-    function testSignedMaximumPayoutMustCoverReservationAndCapsSettlement() public {
+    function testMaximumPayoutMustCoverReservationAndCapsSettlement() public {
         HouseGameLedger.Reservation[] memory invalid =
             _oneReservation(GAME_ID, keccak256("invalid-action"), keccak256("invalid-round"), 2 ether);
         invalid[0].maxPayout = 2 ether - 1;
-        uint256 deadline = block.timestamp + 1 hours;
-        bytes memory signature = _sign(PLAYER, address(0), invalid, deadline);
         vm.expectRevert(HouseGameLedger.PayoutLimitExceeded.selector);
-        vm.prank(PLAYER);
-        ledger.reserveBatch{value: 2 ether}(address(0), invalid, deadline, signature);
+        vm.prank(operator);
+        ledger.reserveBatchFor(address(token), _onePlayer(PLAYER), invalid);
 
         bytes32 roundKey = keccak256("absolute-cap-round");
         HouseGameLedger.Reservation[] memory capped =
             _oneReservation(GAME_ID, keccak256("absolute-cap-reserve"), roundKey, 1 ether);
         capped[0].maxPayout = 10 ether;
-        _reserveNative(PLAYER, capped);
+        _reserveFor(PLAYER, capped);
         bytes32 actionKey = keccak256("absolute-cap-settle");
         _initiate(keccak256("absolute-cap-initiation"), roundKey, actionKey, block.timestamp + 5 minutes);
         vm.expectRevert(HouseGameLedger.PayoutLimitExceeded.selector);
@@ -798,24 +716,17 @@ contract HouseGameLedgerTest is Test {
         players[0] = player;
     }
 
-    function _reserveNative(address player, HouseGameLedger.Reservation[] memory reservations) internal {
-        uint256 total;
-        for (uint256 i; i < reservations.length; ++i) {
-            total += reservations[i].amount;
-        }
-        uint256 deadline = block.timestamp + 1 hours;
-        bytes memory signature = _sign(player, address(0), reservations, deadline);
-        vm.prank(player);
-        ledger.reserveBatch{value: total}(address(0), reservations, deadline, signature);
+    function _reserveFor(address player, HouseGameLedger.Reservation[] memory reservations) internal {
+        _reserveToken(player, address(token), reservations);
     }
 
     function _reserveToken(address player, address wagerToken, HouseGameLedger.Reservation[] memory reservations)
         internal
     {
-        uint256 deadline = block.timestamp + 1 hours;
-        bytes memory signature = _sign(player, wagerToken, reservations, deadline);
-        vm.prank(player);
-        ledger.reserveBatch(wagerToken, reservations, deadline, signature);
+        address[] memory players = new address[](reservations.length);
+        for (uint256 i; i < reservations.length; ++i) players[i] = player;
+        vm.prank(operator);
+        ledger.reserveBatchFor(wagerToken, players, reservations);
     }
 
     function _settle(
@@ -870,14 +781,4 @@ contract HouseGameLedgerTest is Test {
         ledger.initiateSettlementBatch(actionKey, initiations, expiresAt);
     }
 
-    function _sign(
-        address player,
-        address wagerToken,
-        HouseGameLedger.Reservation[] memory reservations,
-        uint256 deadline
-    ) internal view returns (bytes memory) {
-        bytes32 digest = ledger.reservationDigest(player, wagerToken, reservations, deadline);
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(OPERATOR_KEY, digest);
-        return abi.encodePacked(r, s, v);
-    }
 }

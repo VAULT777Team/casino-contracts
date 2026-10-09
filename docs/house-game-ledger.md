@@ -2,44 +2,35 @@
 
 `HouseGameLedger` is the bankroll-facing settlement boundary for house games
 whose results are produced by background operators. It does not validate game
-outcomes; it limits trusted operators with signed reservations, immutable round
-bindings, signed maximum payouts, and final settlement.
+outcomes; it limits trusted operators with immutable round bindings, explicit
+maximum payouts, and final settlement.
 
 ## Flow
 
 1. The backend validates whether a game is enabled, applies wager limits, and
    computes the theoretical maximum gross payout for every round.
-2. Direct-funded play uses `reserveBatch`: the player submits one reservation
-   per `roundKey` with an operator signature. The signature binds the player,
-   token, game ID, wager, maximum payout, full ordered batch, deadline, chain
-   ID, and ledger address.
-3. Instant play grants a short-lived, tightly scoped session signer permission
-   to call `reserveBatch` through the player's smart account. Native and ERC-20
-   wager principal therefore always comes from the smart account, while the
-   operator covers transaction gas and no wallet prompt is required
-   for each play.
-4. ERC-20-only managed play can instead use
+2. Reservations use
    `reserveBatchFor(address token,address[] players,Reservation[] reservations)`.
    An authorized operator submits the batch without a signature or deadline,
    but each explicit player funds their aligned reservation through an ERC-20
    allowance to the ledger. Native token reservations are rejected, so the
    operator pays gas only and never supplies wager principal.
-5. Funds are deposited into the current registry bankroll. The declared
+3. Funds are deposited into the current registry bankroll. The declared
    maximum payout is reserved in that bankroll.
-6. Before outcomes are put in calldata, the operator calls
+4. Before outcomes are put in calldata, the operator calls
    `initiateSettlementBatch` with the round keys, their already-derived
    settlement action keys, and an expiry. This outcome-free transaction blocks
    player cancellation for 1–30 minutes. A round can only be initiated once,
    so an operator cannot keep renewing a stale lock.
-7. After initiation confirms, the operator calls `settleBatch`. Every item must explicitly set
+5. After initiation confirms, the operator calls `settleBatch`. Every item must explicitly set
    `finalClose`, `actualWager <= reservation`, and `grossPlayerReturn` must
    include all unused reservation:
 
    `grossPlayerReturn >= reservation - actualWager`
 
-   The return is also bounded by the immutable maximum payout signed during
+   The return is also bounded by the immutable maximum payout recorded during
    reservation. Closed/cancelled rounds cannot be changed.
-8. Failed bankroll payouts become player-claimable pending payouts. Their
+6. Failed bankroll payouts become player-claimable pending payouts. Their
    funds remain reserved at the original bankroll until `claimPending`
    succeeds.
 
@@ -100,10 +91,9 @@ cast send "$HOUSE_GAME_LEDGER_ADDRESS" \
 Atomic mixed-state updates use `setOperators(address[],bool[])`. Owner-managed
 admin updates use `setAdmin(address,bool)` and `setAdmins(address[],bool[])`.
 
-Each active backend deployment currently uses one
-`HOUSE_GAME_OPERATOR_PRIVATE_KEY`. Its derived address must be enabled with
-`setOperator`. Multiple authorized addresses are useful for key rotation,
-separate environments, or independent worker deployments; operators must not
+OCG registry-backed reservation and settlement operator addresses must be
+enabled with `setOperator`. Multiple authorized addresses provide independent
+nonce domains, rotation capacity, and worker concurrency; operators must not
 share private keys.
 
 Broadcast only after separately registering the deployed ledger as an approved

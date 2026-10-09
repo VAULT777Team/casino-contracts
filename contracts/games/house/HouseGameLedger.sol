@@ -3,7 +3,6 @@ pragma solidity ^0.8.20;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 import {IBankLP} from "../../bankroll/interfaces/IBankLP.sol";
@@ -11,21 +10,14 @@ import {IBankrollRegistry} from "../../bankroll/interfaces/IBankrollRegistry.sol
 
 /// @title House Game Ledger
 /// @notice Reserves player funds for off-chain house games and closes each round once.
-/// @dev Operators authorize player reservations and later submit final results. The
-///      ledger trusts authorized operators for game outcomes, but enforces reservation,
-///      signed maximum payout, refund, replay, player, and token constraints.
+/// @dev Authorized operators submit player-funded ERC-20 reservations and final results.
+///      The ledger enforces reservation, maximum payout, refund, replay, player, and token constraints.
 contract HouseGameLedger is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     uint256 public constant MIN_REFUND_DELAY = 5 minutes;
     uint256 public constant MIN_SETTLEMENT_LOCK_DURATION = 1 minutes;
     uint256 public constant MAX_SETTLEMENT_LOCK_DURATION = 30 minutes;
-
-    bytes32 private constant RESERVATION_ITEM_TYPEHASH =
-        keccak256("Reservation(bytes32 gameId,bytes32 actionKey,bytes32 roundKey,uint256 amount,uint256 maxPayout)");
-    bytes32 private constant RESERVATION_BATCH_TYPEHASH = keccak256(
-        "ReservationBatch(address player,address token,bytes32 itemsHash,uint256 deadline,uint256 chainId,address ledger)"
-    );
 
     enum RoundStatus {
         None,
@@ -94,9 +86,7 @@ contract HouseGameLedger is ReentrancyGuard {
     error BatchLengthMismatch();
     error DuplicateAction(bytes32 actionKey);
     error InvalidFinalClose();
-    error InvalidOperatorSignature();
     error InvalidRoundStatus(bytes32 roundKey, RoundStatus status);
-    error InvalidSignatureDeadline();
     error InvalidValue();
     error NativeValueNotAllowed();
     error NoPendingPayout();
@@ -116,7 +106,6 @@ contract HouseGameLedger is ReentrancyGuard {
     error SettlementLocked(bytes32 roundKey, uint256 expiresAt);
     error SettlementNotInitiated(bytes32 roundKey);
     error SettlementActionMismatch(bytes32 roundKey);
-    error SignatureExpired();
     error TokenNotAllowed();
     error UnusedReservationNotReturned();
     error WagerExceedsReservation();
@@ -256,60 +245,6 @@ contract HouseGameLedger is ReentrancyGuard {
         emit PauseUpdated(shouldPause, msg.sender);
     }
 
-    /// @notice Returns the exact EIP-191 digest an operator must sign.
-    function reservationDigest(address player, address token, Reservation[] calldata reservations, uint256 deadline)
-        public
-        view
-        returns (bytes32)
-    {
-        bytes32[] memory itemHashes = new bytes32[](reservations.length);
-        for (uint256 i; i < reservations.length;) {
-            Reservation calldata item = reservations[i];
-            itemHashes[i] = keccak256(
-                abi.encode(
-                    RESERVATION_ITEM_TYPEHASH, item.gameId, item.actionKey, item.roundKey, item.amount, item.maxPayout
-                )
-            );
-            unchecked {
-                ++i;
-            }
-        }
-
-        bytes32 batchHash = keccak256(
-            abi.encode(
-                RESERVATION_BATCH_TYPEHASH,
-                player,
-                token,
-                keccak256(abi.encodePacked(itemHashes)),
-                deadline,
-                block.chainid,
-                address(this)
-            )
-        );
-        return ECDSA.toEthSignedMessageHash(batchHash);
-    }
-
-    /// @notice Reserves one or more rounds funded directly by the calling player.
-    /// @dev A single token and current registry bankroll are used for the whole batch.
-    function reserveBatch(
-        address token,
-        Reservation[] calldata reservations,
-        uint256 deadline,
-        bytes calldata operatorSignature
-    ) external payable nonReentrant whenNotPaused {
-        if (reservations.length == 0) revert BatchLengthMismatch();
-        if (deadline == 0) revert InvalidSignatureDeadline();
-        if (block.timestamp > deadline) revert SignatureExpired();
-        _validateReservationSignature(token, reservations, deadline, operatorSignature);
-
-        address bankroll = _currentBankroll(token);
-        (uint256 totalReservation, uint256 totalBankrollReservation) =
-            _recordReservationBatch(msg.sender, token, bankroll, reservations);
-
-        _deposit(bankroll, token, totalReservation);
-        IBankLP(bankroll).reserveFunds(token, totalBankrollReservation);
-    }
-
     /// @notice Reserves ERC-20-funded rounds submitted by an authorized operator for explicit players.
     /// @dev Players and reservations are aligned one-to-one. Each player must approve this ledger
     ///      for the corresponding reservation amount.
@@ -348,39 +283,11 @@ contract HouseGameLedger is ReentrancyGuard {
         IBankLP(bankroll).reserveFunds(token, totalBankrollReservation);
     }
 
-    function _validateReservationSignature(
-        address token,
-        Reservation[] calldata reservations,
-        uint256 deadline,
-        bytes calldata operatorSignature
-    ) private view {
-        address signer = ECDSA.recover(reservationDigest(msg.sender, token, reservations, deadline), operatorSignature);
-        if (!isOperator[signer]) revert InvalidOperatorSignature();
-    }
-
     function _currentBankroll(address token) private view returns (address bankroll) {
         (bankroll,,,) = registry.getCurrentBankroll();
         if (bankroll == address(0)) revert ZeroAddress();
         if (!IBankLP(bankroll).getIsValidWager(address(this), token)) {
             revert TokenNotAllowed();
-        }
-    }
-
-    function _recordReservationBatch(
-        address player,
-        address token,
-        address bankroll,
-        Reservation[] calldata reservations
-    ) private returns (uint256 totalReservation, uint256 totalBankrollReservation) {
-        uint256 count = reservations.length;
-        for (uint256 i; i < count;) {
-            (uint256 reservationAmount, uint256 riskReservation) =
-                _recordReservation(player, token, bankroll, reservations[i]);
-            totalReservation += reservationAmount;
-            totalBankrollReservation += riskReservation;
-            unchecked {
-                ++i;
-            }
         }
     }
 
@@ -585,20 +492,6 @@ contract HouseGameLedger is ReentrancyGuard {
         Round storage round = _rounds[roundKey];
         if (round.status == RoundStatus.None) return 0;
         return round.refundAt;
-    }
-
-    function _deposit(address bankroll, address token, uint256 amount) private {
-        if (token == address(0)) {
-            if (msg.value != amount) revert InvalidValue();
-            bool deposited = IBankLP(bankroll).depositEther{value: amount}();
-            if (!deposited) revert InvalidValue();
-        } else {
-            if (msg.value != 0) revert NativeValueNotAllowed();
-            IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-            IERC20(token).safeApprove(bankroll, 0);
-            IERC20(token).safeApprove(bankroll, amount);
-            IBankLP(bankroll).deposit(token, amount);
-        }
     }
 
     function _payoutAndRelease(address player, address bankroll, address token, uint256 payout, uint256 reservedAmount)
