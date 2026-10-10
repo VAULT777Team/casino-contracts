@@ -15,8 +15,11 @@ maximum payouts, and final settlement.
    but each explicit player funds their aligned reservation through an ERC-20
    allowance to the ledger. Native token reservations are rejected, so the
    operator pays gas only and never supplies wager principal.
-3. Funds are deposited into the current registry bankroll. The declared
-   maximum payout is reserved in that bankroll.
+3. Funds are deposited into the current registry bankroll. By default, the
+   declared maximum payout is reserved in that bankroll. An owner-authorized
+   admin can call `setBankrollReservationsEnabled(false)` to disable BankLP
+   liquidity locking for future rounds. The immutable maximum payout remains
+   enforced even when no BankLP funds are reserved.
 4. Before outcomes are put in calldata, the operator calls
    `initiateSettlementBatch` with the round keys, their already-derived
    settlement action keys, and an expiry. This outcome-free transaction blocks
@@ -30,9 +33,10 @@ maximum payouts, and final settlement.
 
    The return is also bounded by the immutable maximum payout recorded during
    reservation. Closed/cancelled rounds cannot be changed.
-6. Failed bankroll payouts become player-claimable pending payouts. Their
-   funds remain reserved at the original bankroll until `claimPending`
-   succeeds.
+6. Failed bankroll payouts become player-claimable pending payouts. Any
+   liquidity reserved for that round remains reserved until `claimPending`
+   succeeds. Unreserved rounds remain claimable without attempting to release
+   funds that were never locked.
 
 Every reserve, settle, and cancel action uses a globally replay-protected
 `actionKey`. `getRound` and `getRoundStatus` expose explicit round state.
@@ -45,6 +49,12 @@ player can recover normally. The refund delay has an on-chain minimum of five
 minutes. Operators/admins can cancel earlier for recovery. Pausing blocks new
 reservations but deliberately leaves initiation, settlement, cancellation,
 and pending claims available.
+
+Bankroll reservation mode is snapshotted per round. Changing
+`bankrollReservationsEnabled` affects only future reservations. Disabling it
+removes BankLP withdrawal protection for outstanding maximum payouts, so an
+otherwise valid settlement can become a pending payout when current liquidity
+is insufficient.
 
 ## Deployment
 
@@ -90,6 +100,14 @@ cast send "$HOUSE_GAME_LEDGER_ADDRESS" \
 
 Atomic mixed-state updates use `setOperators(address[],bool[])`. Owner-managed
 admin updates use `setAdmin(address,bool)` and `setAdmins(address[],bool[])`.
+Bankroll exposure locking for future rounds can be changed through:
+
+```sh
+cast send "$HOUSE_GAME_LEDGER_ADDRESS" \
+  "setBankrollReservationsEnabled(bool)" false \
+  --rpc-url "$RPC_URL" \
+  --private-key "$OWNER_OR_ADMIN_PRIVATE_KEY"
+```
 
 OCG registry-backed reservation and settlement operator addresses must be
 enabled with `setOperator`. Multiple authorized addresses provide independent
