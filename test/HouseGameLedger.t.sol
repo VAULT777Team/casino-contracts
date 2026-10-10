@@ -143,6 +143,38 @@ contract HouseGameLedgerTest is Test {
         }
     }
 
+    function testAdminCanDisableAndReenableBankrollReservations() public {
+        bytes32 unreservedRound = keccak256("unreserved-round");
+        ledger.setBankrollReservationsEnabled(false);
+        assertFalse(ledger.bankrollReservationsEnabled());
+
+        HouseGameLedger.Reservation[] memory unreserved =
+            _oneReservation(GAME_ID, keccak256("unreserved-action"), unreservedRound, 1 ether);
+        unreserved[0].maxPayout = 5 ether;
+        _reserveFor(PLAYER, unreserved);
+
+        assertEq(bankroll.reservedFunds(address(token)), 0);
+        assertEq(ledger.getRound(unreservedRound).bankrollReservation, 5 ether);
+        assertEq(ledger.roundBankrollReservationAmount(unreservedRound), 0);
+        _settle(keccak256("unreserved-settle"), unreservedRound, 1 ether, 5 ether, true);
+        assertEq(bankroll.reservedFunds(address(token)), 0);
+
+        bytes32 reservedRound = keccak256("reenabled-round");
+        ledger.setBankrollReservationsEnabled(true);
+        HouseGameLedger.Reservation[] memory reserved =
+            _oneReservation(GAME_ID, keccak256("reenabled-action"), reservedRound, 1 ether);
+        _reserveFor(PLAYER, reserved);
+
+        assertEq(bankroll.reservedFunds(address(token)), 5 ether);
+        assertEq(ledger.roundBankrollReservationAmount(reservedRound), 5 ether);
+    }
+
+    function testOperatorCannotChangeBankrollReservationMode() public {
+        vm.prank(operator);
+        vm.expectRevert(HouseGameLedger.NotAdmin.selector);
+        ledger.setBankrollReservationsEnabled(false);
+    }
+
     function testSetOperatorsIsAtomicAndAdminOnly() public {
         address[] memory operators = new address[](2);
         operators[0] = address(0x1001);
@@ -650,7 +682,7 @@ contract HouseGameLedgerTest is Test {
 
         _settle(keccak256("pending-settle"), roundKey, 1 ether, 3 ether, true);
 
-        (uint256 pendingAmount) = ledger.pendingPayouts(PLAYER, address(bankroll), address(token));
+        (uint256 pendingAmount,) = ledger.pendingPayouts(PLAYER, address(bankroll), address(token));
         assertEq(pendingAmount, 3 ether);
         assertEq(bankroll.reservedFunds(address(token)), 3 ether);
 
@@ -658,7 +690,7 @@ contract HouseGameLedgerTest is Test {
         vm.prank(PLAYER);
         ledger.claimPending(address(bankroll), address(token));
 
-        (pendingAmount) = ledger.pendingPayouts(PLAYER, address(bankroll), address(token));
+        (pendingAmount,) = ledger.pendingPayouts(PLAYER, address(bankroll), address(token));
         assertEq(pendingAmount, 0);
         assertEq(bankroll.reservedFunds(address(token)), 0);
     }

@@ -67,17 +67,20 @@ contract HouseGameLedger is ReentrancyGuard {
 
     struct PendingPayout {
         uint256 amount;
+        uint256 reservedAmount;
     }
 
     address public owner;
     IBankrollRegistry public registry;
     bool public paused;
+    bool public bankrollReservationsEnabled;
     uint256 public refundDelay;
 
     mapping(address => bool) public isAdmin;
     mapping(address => bool) public isOperator;
     mapping(bytes32 => bool) public actionUsed;
     mapping(bytes32 => Round) private _rounds;
+    mapping(bytes32 => uint256) public roundBankrollReservationAmount;
     mapping(address player => mapping(address bankroll => mapping(address token => PendingPayout))) public
         pendingPayouts;
     mapping(address bankroll => mapping(address token => uint256)) public totalPendingPayouts;
@@ -117,6 +120,7 @@ contract HouseGameLedger is ReentrancyGuard {
     event OperatorUpdated(address indexed operator, bool allowed);
     event RegistryUpdated(address indexed registry);
     event PauseUpdated(bool paused, address indexed caller);
+    event BankrollReservationsEnabledUpdated(bool enabled, address indexed caller);
     event RefundDelayUpdated(uint256 refundDelay);
     event RoundReserved(
         bytes32 indexed actionKey,
@@ -171,6 +175,7 @@ contract HouseGameLedger is ReentrancyGuard {
 
         owner = initialOwner;
         registry = IBankrollRegistry(bankrollRegistry);
+        bankrollReservationsEnabled = true;
         if (initialRefundDelay < MIN_REFUND_DELAY) revert RefundDelayTooShort();
         refundDelay = initialRefundDelay;
 
@@ -245,6 +250,11 @@ contract HouseGameLedger is ReentrancyGuard {
         emit PauseUpdated(shouldPause, msg.sender);
     }
 
+    function setBankrollReservationsEnabled(bool enabled) external onlyAdmin {
+        bankrollReservationsEnabled = enabled;
+        emit BankrollReservationsEnabledUpdated(enabled, msg.sender);
+    }
+
     /// @notice Reserves ERC-20-funded rounds submitted by an authorized operator for explicit players.
     /// @dev Players and reservations are aligned one-to-one. Each player must approve this ledger
     ///      for the corresponding reservation amount.
@@ -266,11 +276,10 @@ contract HouseGameLedger is ReentrancyGuard {
             address player = players[i];
             if (player == address(0)) revert ZeroAddress();
 
-            (uint256 reservationAmount, uint256 riskReservation) =
-                _recordReservation(player, token, bankroll, reservations[i]);
+            uint256 reservationAmount = _recordReservation(player, token, bankroll, reservations[i]);
             IERC20(token).safeTransferFrom(player, address(this), reservationAmount);
             totalReservation += reservationAmount;
-            totalBankrollReservation += riskReservation;
+            totalBankrollReservation += roundBankrollReservationAmount[reservations[i].roundKey];
 
             unchecked {
                 ++i;
@@ -280,7 +289,9 @@ contract HouseGameLedger is ReentrancyGuard {
         IERC20(token).safeApprove(bankroll, 0);
         IERC20(token).safeApprove(bankroll, totalReservation);
         IBankLP(bankroll).deposit(token, totalReservation);
-        IBankLP(bankroll).reserveFunds(token, totalBankrollReservation);
+        if (totalBankrollReservation != 0) {
+            IBankLP(bankroll).reserveFunds(token, totalBankrollReservation);
+        }
     }
 
     function _currentBankroll(address token) private view returns (address bankroll) {
@@ -293,7 +304,7 @@ contract HouseGameLedger is ReentrancyGuard {
 
     function _recordReservation(address player, address token, address bankroll, Reservation calldata item)
         private
-        returns (uint256 reservationAmount, uint256 riskReservation)
+        returns (uint256 reservationAmount)
     {
         if (item.gameId == bytes32(0) || item.actionKey == bytes32(0) || item.roundKey == bytes32(0)) {
             revert ZeroKey();
@@ -307,7 +318,7 @@ contract HouseGameLedger is ReentrancyGuard {
             revert RoundAlreadyExists(item.roundKey);
         }
 
-        riskReservation = item.maxPayout;
+        uint256 riskReservation = item.maxPayout;
 
         actionUsed[item.actionKey] = true;
         Round storage round = _rounds[item.roundKey];
@@ -320,11 +331,12 @@ contract HouseGameLedger is ReentrancyGuard {
         round.refundAt = block.timestamp + refundDelay;
         round.reservation = item.amount;
         round.bankrollReservation = riskReservation;
+        roundBankrollReservationAmount[item.roundKey] = bankrollReservationsEnabled ? riskReservation : 0;
 
         emit RoundReserved(
             item.actionKey, item.roundKey, item.gameId, player, token, bankroll, item.amount, riskReservation
         );
-        return (item.amount, riskReservation);
+        return item.amount;
     }
 
     /// @notice Locks reserved rounds to their replay-protected settlement actions without disclosing outcomes.
@@ -413,7 +425,11 @@ contract HouseGameLedger is ReentrancyGuard {
             round.grossPlayerReturn = settlement.grossPlayerReturn;
 
             _payoutAndRelease(
-                round.player, round.bankroll, round.token, settlement.grossPlayerReturn, round.bankrollReservation
+                round.player,
+                round.bankroll,
+                round.token,
+                settlement.grossPlayerReturn,
+                roundBankrollReservationAmount[settlement.roundKey]
             );
 
             emit RoundClosed(
@@ -461,7 +477,13 @@ contract HouseGameLedger is ReentrancyGuard {
         round.actualWager = 0;
         round.grossPlayerReturn = round.reservation;
 
-        _payoutAndRelease(round.player, round.bankroll, round.token, round.reservation, round.bankrollReservation);
+        _payoutAndRelease(
+            round.player,
+            round.bankroll,
+            round.token,
+            round.reservation,
+            roundBankrollReservationAmount[roundKey]
+        );
 
         emit RoundCancelled(actionKey, roundKey, round.player, round.reservation);
     }
@@ -472,10 +494,14 @@ contract HouseGameLedger is ReentrancyGuard {
         if (amount == 0) revert NoPendingPayout();
 
         pending.amount = 0;
+        uint256 reservedAmount = pending.reservedAmount;
+        pending.reservedAmount = 0;
         totalPendingPayouts[bankroll][token] -= amount;
 
         IBankLP(bankroll).transferPayout(msg.sender, amount, token);
-        IBankLP(bankroll).releaseFunds(token, amount);
+        if (reservedAmount != 0) {
+            IBankLP(bankroll).releaseFunds(token, reservedAmount);
+        }
 
         emit PendingPayoutClaimed(msg.sender, bankroll, token, amount);
     }
@@ -498,16 +524,25 @@ contract HouseGameLedger is ReentrancyGuard {
         private
     {
         if (payout == 0) {
-            IBankLP(bankroll).releaseFunds(token, reservedAmount);
+            if (reservedAmount != 0) {
+                IBankLP(bankroll).releaseFunds(token, reservedAmount);
+            }
             return;
         }
 
         try IBankLP(bankroll).transferPayout(player, payout, token) {
-            IBankLP(bankroll).releaseFunds(token, reservedAmount);
+            if (reservedAmount != 0) {
+                IBankLP(bankroll).releaseFunds(token, reservedAmount);
+            }
         } catch {
             pendingPayouts[player][bankroll][token].amount += payout;
+            uint256 retainedReservation = reservedAmount < payout ? reservedAmount : payout;
+            pendingPayouts[player][bankroll][token].reservedAmount += retainedReservation;
             totalPendingPayouts[bankroll][token] += payout;
-            IBankLP(bankroll).releaseFunds(token, reservedAmount - payout);
+            uint256 releasable = reservedAmount - retainedReservation;
+            if (releasable != 0) {
+                IBankLP(bankroll).releaseFunds(token, releasable);
+            }
             emit PendingPayoutRecorded(player, bankroll, token, payout);
         }
     }
