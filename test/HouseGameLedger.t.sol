@@ -695,6 +695,30 @@ contract HouseGameLedgerTest is Test {
         assertEq(bankroll.reservedFunds(address(token)), 0);
     }
 
+    function testUnreservedPayoutFailureCanBeClaimedWithoutReleaseUnderflow() public {
+        ledger.setBankrollReservationsEnabled(false);
+        bytes32 roundKey = keccak256("unreserved-pending-round");
+        _reserveFor(PLAYER, _oneReservation(GAME_ID, keccak256("unreserved-pending-reserve"), roundKey, 2 ether));
+        bankroll.setFailPayouts(true);
+
+        _settle(keccak256("unreserved-pending-settle"), roundKey, 1 ether, 3 ether, true);
+
+        (uint256 pendingAmount, uint256 reservedAmount) =
+            ledger.pendingPayouts(PLAYER, address(bankroll), address(token));
+        assertEq(pendingAmount, 3 ether);
+        assertEq(reservedAmount, 0);
+        assertEq(bankroll.reservedFunds(address(token)), 0);
+
+        bankroll.setFailPayouts(false);
+        vm.prank(PLAYER);
+        ledger.claimPending(address(bankroll), address(token));
+
+        (pendingAmount, reservedAmount) = ledger.pendingPayouts(PLAYER, address(bankroll), address(token));
+        assertEq(pendingAmount, 0);
+        assertEq(reservedAmount, 0);
+        assertEq(bankroll.reservedFunds(address(token)), 0);
+    }
+
     function testPauseBlocksReservationsButNotSettlementOrRefund() public {
         bytes32 roundKey = keccak256("pause-round");
         _reserveFor(PLAYER, _oneReservation(GAME_ID, keccak256("pause-reserve"), roundKey, 1 ether));
