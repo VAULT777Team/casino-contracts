@@ -228,6 +228,44 @@ contract BankLPTest is Test {
         assertEq(token.balanceOf(address(bankroll)), 0);
     }
 
+    function testReserveFundsReportsInsufficientAvailableBalance() public {
+        vm.prank(game);
+        vm.expectRevert("Insufficient available balance to reserve");
+        bankroll.reserveFunds(address(token), 1);
+    }
+
+    function testOwnerCanForceReleaseOrphanedReservedFunds() public {
+        uint256 reserveAmt = 400e18;
+        token.mint(address(bankroll), reserveAmt);
+
+        vm.prank(game);
+        bankroll.reserveFunds(address(token), reserveAmt);
+
+        vm.expectEmit(true, false, false, true);
+        emit BankLP.Bankroll_Reserved_Funds_Force_Released(address(token), 150e18, 250e18);
+        bankroll.forceReleaseReservedFunds(address(token), 150e18);
+
+        assertEq(bankroll.reservedFunds(address(token)), 250e18);
+        assertEq(bankroll.getAvailableBalance(address(token)), 150e18);
+    }
+
+    function testForceReleaseReservedFundsRequiresOwnerAndValidAmount() public {
+        uint256 reserveAmt = 400e18;
+        token.mint(address(bankroll), reserveAmt);
+        vm.prank(game);
+        bankroll.reserveFunds(address(token), reserveAmt);
+
+        vm.prank(makeAddr("attacker"));
+        vm.expectRevert("Not an owner");
+        bankroll.forceReleaseReservedFunds(address(token), 1);
+
+        vm.expectRevert("Invalid release amount");
+        bankroll.forceReleaseReservedFunds(address(token), 0);
+
+        vm.expectRevert("Insufficient reserved funds");
+        bankroll.forceReleaseReservedFunds(address(token), reserveAmt + 1);
+    }
+
     function testDepositERC20CollectsFeesAndPaysTreasury() public {
         uint256 amount = 10_000e18; // divisible by 100 for clean fee math
         uint256 fee = (amount * 2) / 100; // 2%

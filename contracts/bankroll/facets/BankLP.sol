@@ -88,6 +88,12 @@ contract BankLP is WithStorage {
      */
     event Bankroll_Payout_Transferred(address gameAddress, address playerAddress, uint256 payout);
 
+    event Bankroll_Reserved_Funds_Force_Released(
+        address indexed tokenAddress,
+        uint256 amount,
+        uint256 remainingReservedFunds
+    );
+
     /**
      * @dev event emitted when bankroll receives liquidity
      * @param tokenAddress Address of the funded token
@@ -261,7 +267,7 @@ contract BankLP is WithStorage {
     */
     function reserveFunds(address token, uint256 amount) external onlyGame {
         uint256 available = getAvailableBalance(token);
-        require(available >= amount, "Insufficien available balance to reserve");
+        require(available >= amount, "Insufficient available balance to reserve");
         reservedFunds[token] += amount;
     }
 
@@ -273,6 +279,17 @@ contract BankLP is WithStorage {
     function releaseFunds(address token, uint256 amount) external onlyGame {
         require(reservedFunds[token] >= amount, "Insufficient reserved funds");
         reservedFunds[token] -= amount;
+    }
+
+    /**
+     * @dev Emergency accounting repair for orphaned reservations that can no
+     * longer be released by the game contract that created them.
+     */
+    function forceReleaseReservedFunds(address token, uint256 amount) external onlyOwner {
+        require(amount > 0, "Invalid release amount");
+        require(reservedFunds[token] >= amount, "Insufficient reserved funds");
+        reservedFunds[token] -= amount;
+        emit Bankroll_Reserved_Funds_Force_Released(token, amount, reservedFunds[token]);
     }
 
     /**

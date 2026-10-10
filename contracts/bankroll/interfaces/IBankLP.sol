@@ -65,4 +65,6 @@ interface IBankLP {
 
     function releaseFunds(address token, uint256 amount) external;
 
+    function forceReleaseReservedFunds(address token, uint256 amount) external;
+
 }
