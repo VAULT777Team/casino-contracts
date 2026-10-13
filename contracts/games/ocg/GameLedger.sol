@@ -309,6 +309,7 @@ contract GameLedgerV3 is ReentrancyGuard {
         emit MaxPayoutMultiplierUpdated(newMultiplier);
     }
 
+    /// @dev Retained for storage and ABI compatibility; operator cancellation no longer expires.
     function setCancelTimeframe(
         uint256 newTimeframe
     ) external onlyOwnerOrAdmin {
@@ -430,10 +431,6 @@ contract GameLedgerV3 is ReentrancyGuard {
 
         require(r.player != address(0), "ROUND_NOT_FOUND");
         require(r.closedAt == 0, "ALREADY_SETTLED");
-        require(
-            block.timestamp <= r.openedAt + cancelTimeframe,
-            "TIMEFRAME_EXCEEDED"
-        );
 
         uint256 refund = r.totalStake;
         address player = r.player;

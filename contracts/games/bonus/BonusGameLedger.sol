@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.24;
 
-interface IOCGBonus1155V2 {
+interface IBonus1155V2 {
     function debitStakeAndRecordWager(
         address player,
         address token,
@@ -11,11 +11,19 @@ interface IOCGBonus1155V2 {
     ) external;
 
     function creditPayout(address player, address token, uint256 bonusId, uint256 payout) external;
+
+    function cancelStakeAndWager(
+        address player,
+        address token,
+        uint256 bonusId,
+        uint256 refund,
+        uint256 wagerContribution
+    ) external;
 }
 
-/// @title OCG Bonus Game Ledger V2
-/// @notice Backwards-compatible bonus ledger with reservation semantics for interactive house games.
-contract OCGBonusGameLedgerV2 {
+/// @title Vault777 Bonus Game Ledger
+/// @notice Bonus ledger with reservation semantics for interactive house games.
+contract BonusGameLedger {
     uint256 private constant _NOT_ENTERED = 1;
     uint256 private constant _ENTERED = 2;
 
@@ -39,6 +47,7 @@ contract OCGBonusGameLedgerV2 {
     uint256 private _status = _NOT_ENTERED;
 
     mapping(bytes32 => BonusRound) public rounds;
+    mapping(bytes32 => uint256) public roundWagerContribution;
     mapping(bytes32 => bool) public actionUsed;
     mapping(address => bool) public isBetOperator;
     mapping(address => bool) public isSettleOperator;
@@ -213,6 +222,7 @@ contract OCGBonusGameLedgerV2 {
         maxPayoutMultiplierX = value;
     }
 
+    /// @dev Retained for storage and ABI compatibility; settlement-operator cancellation no longer expires.
     function setCancelTimeframe(uint256 value) external onlyOwnerOrAdmin {
         cancelTimeframe = value;
     }
@@ -249,7 +259,7 @@ contract OCGBonusGameLedgerV2 {
             round.reserved = amounts[i];
             round.openedAt = block.timestamp;
             round.bonusContract = bonusContract;
-            IOCGBonus1155V2(round.bonusContract).debitStakeAndRecordWager(player, token, bonusId, amounts[i], 0);
+            IBonus1155V2(round.bonusContract).debitStakeAndRecordWager(player, token, bonusId, amounts[i], 0);
             emit BonusReserved(actionKeys[i], roundKeys[i], player, token, bonusId, amounts[i]);
         }
     }
@@ -273,6 +283,7 @@ contract OCGBonusGameLedgerV2 {
             require(round.consumed + round.released + amounts[i] <= round.reserved, "RESERVE_EXCEEDED");
             round.consumed += amounts[i];
             uint256 contribution = (amounts[i] * wagerContributionBps[i]) / 10_000;
+            roundWagerContribution[roundKeys[i]] += contribution;
 
             // The deployed bonus token exposes debit+progress and credit primitives.
             // Minting then burning the consumed slice leaves the reservation locked
@@ -299,7 +310,7 @@ contract OCGBonusGameLedgerV2 {
             BonusRound storage round = _openRound(roundKeys[i], token, bonusId);
             require(round.consumed + round.released + amounts[i] <= round.reserved, "RESERVE_EXCEEDED");
             round.released += amounts[i];
-            IOCGBonus1155V2(round.bonusContract).creditPayout(round.player, token, bonusId, amounts[i]);
+            IBonus1155V2(round.bonusContract).creditPayout(round.player, token, bonusId, amounts[i]);
             emit BonusReleased(actionKeys[i], roundKeys[i], round.player, amounts[i]);
         }
     }
@@ -320,7 +331,7 @@ contract OCGBonusGameLedgerV2 {
             require(round.consumed + round.released == round.reserved, "RESERVE_OPEN");
             require(payouts[i] <= round.consumed * maxPayoutMultiplierX, "PAYOUT_LIMIT");
             round.closedAt = block.timestamp;
-            IOCGBonus1155V2(round.bonusContract).creditPayout(round.player, token, bonusId, payouts[i]);
+            IBonus1155V2(round.bonusContract).creditPayout(round.player, token, bonusId, payouts[i]);
             emit BetSettled(actionKeys[i], roundKeys[i], round.player, token, bonusId, payouts[i]);
         }
     }
@@ -354,12 +365,13 @@ contract OCGBonusGameLedgerV2 {
         BonusRound storage round = rounds[roundKey];
         require(round.player != address(0), "ROUND_NOT_FOUND");
         require(round.closedAt == 0, "ALREADY_SETTLED");
-        require(block.timestamp <= round.openedAt + cancelTimeframe, "TIMEFRAME_EXCEEDED");
-        require(round.consumed == 0, "WAGER_ALREADY_CONSUMED");
         uint256 refund = round.reserved - round.released;
+        uint256 contribution = roundWagerContribution[roundKey];
+        roundWagerContribution[roundKey] = 0;
         round.released = round.reserved;
         round.closedAt = block.timestamp;
-        IOCGBonus1155V2(round.bonusContract).creditPayout(round.player, round.token, round.bonusId, refund);
+        IBonus1155V2(round.bonusContract)
+            .cancelStakeAndWager(round.player, round.token, round.bonusId, refund, contribution);
         emit RoundCanceled(roundKey, round.player, round.token, round.bonusId, refund);
     }
 
@@ -396,7 +408,7 @@ contract OCGBonusGameLedgerV2 {
     }
 
     function _consumeReservedBonus(BonusRound storage round, uint256 amount, uint256 contribution) private {
-        IOCGBonus1155V2 bonus = IOCGBonus1155V2(round.bonusContract);
+        IBonus1155V2 bonus = IBonus1155V2(round.bonusContract);
         bonus.creditPayout(round.player, round.token, round.bonusId, amount);
         bonus.debitStakeAndRecordWager(round.player, round.token, round.bonusId, amount, contribution);
     }
@@ -430,7 +442,8 @@ contract OCGBonusGameLedgerV2 {
         contribution = (stake * wagerContributionBps) / 10_000;
         round.reserved += stake;
         round.consumed += stake;
-        IOCGBonus1155V2(round.bonusContract).debitStakeAndRecordWager(player, token, bonusId, stake, contribution);
+        roundWagerContribution[roundKey] += contribution;
+        IBonus1155V2(round.bonusContract).debitStakeAndRecordWager(player, token, bonusId, stake, contribution);
         emit BetPlaced(actionKey, roundKey, player, token, bonusId, stake, wagerContributionBps, contribution);
     }
 

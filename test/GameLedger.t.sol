@@ -217,6 +217,17 @@ contract GameLedgerTest is Test {
         _settle(roundKey, keccak256("settle-canceled"), STAKE);
     }
 
+    function testOperatorCanCancelAfterLegacyTimeframe() public {
+        bytes32 roundKey = keccak256("round-late-cancel");
+        _placeBet(roundKey, keccak256("bet-late-cancel"), STAKE);
+
+        vm.warp(block.timestamp + ledger.cancelTimeframe() + 1);
+        ledger.cancel(roundKey);
+
+        assertTrue(ledger.roundCanceled(roundKey));
+        assertEq(PLAYER.balance, STAKE);
+    }
+
     function testClosedRoundCannotAcceptMoreBets() public {
         bytes32 settledRound = keccak256("round-settled");
         _placeBet(settledRound, keccak256("bet-before-settle"), STAKE);

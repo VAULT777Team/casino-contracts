@@ -76,7 +76,7 @@ Example Arbitrum deployment:
 
 ```sh
 export HOUSE_LEDGER_OWNER=0x7C8986119c760C76312F6E23278ab9cA9a1c5b78
-export HOUSE_LEDGER_OPERATOR=0xca03484cD1b8E7a0144de88d8C34970B19bAf294
+export HOUSE_LEDGER_OPERATOR=0xae40ab01fc898c92b9d27c19d92138cbc815c366
 export BANKLP_REGISTRY_ADDRESS=0x54134cE9E35F44be3508462134Be41fA995709eb
 export HOUSE_LEDGER_REFUND_DELAY=600
 
@@ -109,7 +109,7 @@ cast send "$HOUSE_GAME_LEDGER_ADDRESS" \
   --private-key "$OWNER_OR_ADMIN_PRIVATE_KEY"
 ```
 
-OCG registry-backed reservation and settlement operator addresses must be
+Vault777 registry-backed reservation and settlement operator addresses must be
 enabled with `setOperator`. Multiple authorized addresses provide independent
 nonce domains, rotation capacity, and worker concurrency; operators must not
 share private keys.

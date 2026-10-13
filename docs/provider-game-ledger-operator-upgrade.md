@@ -19,8 +19,67 @@ Administrative access follows the same convention through
 
 Deploy `GameLedgerV3` with the required initial operator and current
 `BankrollRegistry`, authorize the ledger in the active `BankLP`, then manage
-every operator through the boolean method. The repository does not perform a
-deployment automatically.
+every operator through the boolean method.
+
+The repository includes `script/DeployGameLedgerV3.s.sol`. It reads:
+
+- `PRIVATE_KEY`
+- `GAME_LEDGER_V3_OWNER`, normally the production Safe
+- `GAME_LEDGER_V3_OPERATOR`, the initial registry-managed provider operator
+- `BANKLP_REGISTRY_ADDRESS`
+- optional `GAME_LEDGER_V3_MAX_PAYOUT_MULTIPLIER_X`, default `100`
+- optional `GAME_LEDGER_V3_CANCEL_TIMEFRAME`, default `600`; retained for ABI
+  compatibility, but operator cancellation no longer expires
+
+Simulation:
+
+```bash
+forge script script/DeployGameLedgerV3.s.sol:DeployGameLedgerV3 \
+  --rpc-url "$RPC_URL"
+```
+
+Arbitrum deployment:
+
+```bash
+export PRIVATE_KEY=...
+export GAME_LEDGER_V3_OWNER=0x...
+export GAME_LEDGER_V3_OPERATOR=0x...
+export BANKLP_REGISTRY_ADDRESS=0x...
+export GAME_LEDGER_V3_MAX_PAYOUT_MULTIPLIER_X=100
+
+forge script script/DeployGameLedgerV3.s.sol:DeployGameLedgerV3 \
+  --rpc-url "$RPC_URL" \
+  --broadcast \
+  --verify
+```
+
+The script deploys under the broadcaster, applies configuration, then transfers
+ownership last. This allows the final owner to be a Safe without requiring the
+Safe to execute intermediate setup transactions.
+
+Authorize and verify the deployment before routing provider traffic:
+
+```bash
+cast send "$BANKLP_ADDRESS" \
+  "setGame(address,bool)" "$GAME_LEDGER_V3_ADDRESS" true \
+  --rpc-url "$RPC_URL" \
+  --private-key "$BANKLP_OWNER_PRIVATE_KEY"
+
+cast call "$GAME_LEDGER_V3_ADDRESS" "owner()(address)" \
+  --rpc-url "$RPC_URL"
+cast call "$GAME_LEDGER_V3_ADDRESS" \
+  "isOperator(address)(bool)" "$GAME_LEDGER_V3_OPERATOR" \
+  --rpc-url "$RPC_URL"
+cast call "$GAME_LEDGER_V3_ADDRESS" \
+  "maxPayoutMultiplierX()(uint256)" \
+  --rpc-url "$RPC_URL"
+cast call "$BANKLP_ADDRESS" \
+  "getIsGame(address)(bool)" "$GAME_LEDGER_V3_ADDRESS" \
+  --rpc-url "$RPC_URL"
+```
+
+Set the maximum payout multiplier to at least the largest provider payout the
+control plane permits. This value is integer X, not basis points.
 
 The owner can update operators with:
 

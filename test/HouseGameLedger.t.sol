@@ -370,18 +370,20 @@ contract HouseGameLedgerTest is Test {
         _settleOnly(actionKey, excessiveRound, 1 ether, 1_000 ether + 1, true);
     }
 
-    function testPlayerCanCancelAfterRefundDelay() public {
+    function testOnlyOperatorCanCancelAfterRefundDelay() public {
         bytes32 roundKey = keccak256("cancel-round");
         _reserveFor(PLAYER, _oneReservation(GAME_ID, keccak256("cancel-reserve"), roundKey, 3 ether));
 
         vm.prank(PLAYER);
-        vm.expectRevert(
-            abi.encodeWithSelector(HouseGameLedger.RefundNotAvailable.selector, block.timestamp + 10 minutes)
-        );
+        vm.expectRevert(HouseGameLedger.NotOperator.selector);
         ledger.cancelRound(keccak256("cancel-action"), roundKey);
 
         vm.warp(block.timestamp + 10 minutes);
         vm.prank(PLAYER);
+        vm.expectRevert(HouseGameLedger.NotOperator.selector);
+        ledger.cancelRound(keccak256("cancel-action"), roundKey);
+
+        vm.prank(operator);
         ledger.cancelRound(keccak256("cancel-action"), roundKey);
 
         assertEq(token.balanceOf(PLAYER), 100 ether);
@@ -396,6 +398,24 @@ contract HouseGameLedgerTest is Test {
         ledger.cancelRound(keccak256("cancel-again"), roundKey);
     }
 
+    function testOwnerAndAdminCannotCancelWithoutOperatorRole() public {
+        address admin = address(0xAD1);
+        ledger.setAdmin(admin, true);
+        bytes32 roundKey = keccak256("role-separated-cancel-round");
+        _reserveFor(PLAYER, _oneReservation(GAME_ID, keccak256("role-separated-reserve"), roundKey, 3 ether));
+
+        vm.expectRevert(HouseGameLedger.NotOperator.selector);
+        ledger.cancelRound(keccak256("owner-cancel"), roundKey);
+
+        vm.prank(admin);
+        vm.expectRevert(HouseGameLedger.NotOperator.selector);
+        ledger.cancelRound(keccak256("admin-cancel"), roundKey);
+
+        vm.prank(operator);
+        ledger.cancelRound(keccak256("operator-cancel"), roundKey);
+        assertEq(uint256(ledger.getRoundStatus(roundKey)), uint256(HouseGameLedger.RoundStatus.Cancelled));
+    }
+
     function testPlayerCannotCancelAfterSettlementInitiation() public {
         bytes32 roundKey = keccak256("locked-round");
         bytes32 settlementAction = keccak256("locked-settlement");
@@ -404,9 +424,7 @@ contract HouseGameLedgerTest is Test {
         _initiate(keccak256("locked-initiation"), roundKey, settlementAction, block.timestamp + 5 minutes);
 
         vm.prank(PLAYER);
-        vm.expectRevert(
-            abi.encodeWithSelector(HouseGameLedger.SettlementLocked.selector, roundKey, block.timestamp + 5 minutes)
-        );
+        vm.expectRevert(HouseGameLedger.NotOperator.selector);
         ledger.cancelRound(keccak256("locked-cancel"), roundKey);
 
         HouseGameLedger.Round memory round = ledger.getRound(roundKey);
@@ -414,25 +432,22 @@ contract HouseGameLedgerTest is Test {
         assertEq(uint256(round.status), uint256(HouseGameLedger.RoundStatus.Reserved));
     }
 
-    function testExpiredSettlementLockAllowsPlayerRecoveryAndCannotBeRenewed() public {
+    function testExpiredSettlementLockKeepsBoundActionAndAllowsSettlementRetry() public {
         bytes32 roundKey = keccak256("stale-lock-round");
         _reserveFor(PLAYER, _oneReservation(GAME_ID, keccak256("stale-lock-reserve"), roundKey, 3 ether));
+        bytes32 settlementAction = keccak256("stale-lock-settlement");
         bytes32 expiry = bytes32(block.timestamp + 5 minutes);
-        _initiate(keccak256("stale-lock-initiation"), roundKey, keccak256("stale-lock-settlement"), uint256(expiry));
+        _initiate(keccak256("stale-lock-initiation"), roundKey, settlementAction, uint256(expiry));
         vm.warp(uint256(expiry) + 1);
 
         HouseGameLedger.SettlementInitiation[] memory retry = new HouseGameLedger.SettlementInitiation[](1);
-        retry[0] = HouseGameLedger.SettlementInitiation({
-            roundKey: roundKey, settlementActionKey: keccak256("stale-lock-settlement")
-        });
+        retry[0] = HouseGameLedger.SettlementInitiation({roundKey: roundKey, settlementActionKey: settlementAction});
         vm.prank(operator);
         vm.expectRevert(abi.encodeWithSelector(HouseGameLedger.SettlementAlreadyInitiated.selector, roundKey));
         ledger.initiateSettlementBatch(keccak256("stale-lock-retry"), retry, block.timestamp + 5 minutes);
 
-        vm.warp(block.timestamp + 5 minutes);
-        vm.prank(PLAYER);
-        ledger.cancelRound(keccak256("stale-lock-cancel"), roundKey);
-        assertEq(uint256(ledger.getRoundStatus(roundKey)), uint256(HouseGameLedger.RoundStatus.Cancelled));
+        _settleOnly(settlementAction, roundKey, 3 ether, 0, true);
+        assertEq(uint256(ledger.getRoundStatus(roundKey)), uint256(HouseGameLedger.RoundStatus.Closed));
     }
 
     function testSettlementRequiresActiveMatchingInitiation() public {
@@ -462,7 +477,7 @@ contract HouseGameLedgerTest is Test {
         ledger.settleBatch(settlements);
     }
 
-    function testSettlementFailsAfterLockExpiry() public {
+    function testSettlementSucceedsAfterLockExpiry() public {
         bytes32 roundKey = keccak256("expired-settlement-round");
         bytes32 settlementAction = keccak256("expired-settlement-action");
         _reserveFor(PLAYER, _oneReservation(GAME_ID, keccak256("expired-settlement-reserve"), roundKey, 1 ether));
@@ -479,8 +494,8 @@ contract HouseGameLedgerTest is Test {
             finalClose: true
         });
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(HouseGameLedger.SettlementLockExpired.selector, roundKey, expiresAt));
         ledger.settleBatch(settlements);
+        assertEq(uint256(ledger.getRoundStatus(roundKey)), uint256(HouseGameLedger.RoundStatus.Closed));
     }
 
     function testRefundDelayHasContractMinimum() public {
@@ -780,7 +795,9 @@ contract HouseGameLedgerTest is Test {
         internal
     {
         address[] memory players = new address[](reservations.length);
-        for (uint256 i; i < reservations.length; ++i) players[i] = player;
+        for (uint256 i; i < reservations.length; ++i) {
+            players[i] = player;
+        }
         vm.prank(operator);
         ledger.reserveBatchFor(wagerToken, players, reservations);
     }
@@ -836,5 +853,4 @@ contract HouseGameLedgerTest is Test {
         vm.prank(operator);
         ledger.initiateSettlementBatch(actionKey, initiations, expiresAt);
     }
-
 }

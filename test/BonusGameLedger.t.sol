@@ -2,7 +2,7 @@
 pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
-import {OCGBonusGameLedgerV2} from "../contracts/games/bonus/OCGBonusGameLedgerV2.sol";
+import {BonusGameLedger} from "../contracts/games/bonus/BonusGameLedger.sol";
 
 contract Bonus1155LedgerMock {
     mapping(address => mapping(uint256 => uint256)) public balanceOf;
@@ -29,19 +29,27 @@ contract Bonus1155LedgerMock {
         require(msg.sender == ledger, "NOT_LEDGER");
         balanceOf[player][bonusId] += payout;
     }
+
+    function cancelStakeAndWager(address player, address, uint256 bonusId, uint256 refund, uint256 contribution)
+        external
+    {
+        require(msg.sender == ledger, "NOT_LEDGER");
+        wageredAmount[bonusId] -= contribution;
+        balanceOf[player][bonusId] += refund;
+    }
 }
 
-contract OCGBonusGameLedgerV2Test is Test {
+contract BonusGameLedgerTest is Test {
     address constant PLAYER = address(0xBEEF);
     address constant TOKEN = address(0xCAFE);
     uint256 constant BONUS_ID = 7;
 
     Bonus1155LedgerMock bonus;
-    OCGBonusGameLedgerV2 ledger;
+    BonusGameLedger ledger;
 
     function setUp() public {
         bonus = new Bonus1155LedgerMock();
-        ledger = new OCGBonusGameLedgerV2(address(this), address(this), address(bonus));
+        ledger = new BonusGameLedger(address(this), address(this), address(bonus));
         bonus.setLedger(address(ledger));
         bonus.mint(PLAYER, BONUS_ID, 100 ether);
     }
@@ -103,6 +111,20 @@ contract OCGBonusGameLedgerV2Test is Test {
         vm.prank(address(0xBAD));
         vm.expectRevert("NOT_BET_OPERATOR");
         ledger.reserveBonusBatchFor(TOKEN, BONUS_ID, players, keys, _rounds(keys[1]), amounts);
+
+        bytes32 round = _reserve(10 ether);
+        vm.startPrank(address(0xBAD));
+        vm.expectRevert("NOT_SETTLE_OPERATOR");
+        ledger.releaseBonusBatch(
+            TOKEN, BONUS_ID, _actions(keccak256("unauthorized-release")), _rounds(round), _amounts(10 ether)
+        );
+        vm.expectRevert("NOT_SETTLE_OPERATOR");
+        ledger.settleBonusBatch(
+            TOKEN, BONUS_ID, _actions(keccak256("unauthorized-settle")), _rounds(round), _amounts(0)
+        );
+        vm.expectRevert("NOT_SETTLE_OPERATOR");
+        ledger.cancel(round);
+        vm.stopPrank();
     }
 
     function testCombinedOperatorSettersSupportMixedBatchStates() public {
@@ -223,7 +245,19 @@ contract OCGBonusGameLedgerV2Test is Test {
         assertEq(bonus.wageredAmount(BONUS_ID), 0);
     }
 
-    function testCancellationCannotRestoreConsumedStake() public {
+    function testSettlementOperatorCanCancelAfterLegacyTimeframe() public {
+        bytes32 round = _reserve(10 ether);
+        vm.warp(block.timestamp + ledger.cancelTimeframe() + 1);
+
+        ledger.cancel(round);
+
+        assertEq(bonus.balanceOf(PLAYER, BONUS_ID), 100 ether);
+        (,,,,, uint256 released,, uint256 closedAt,) = ledger.rounds(round);
+        assertEq(released, 10 ether);
+        assertGt(closedAt, 0);
+    }
+
+    function testCancellationRestoresConsumedStakeAndWagerProgress() public {
         bytes32 round = keccak256("legacy-cancel-round");
         address[] memory players = new address[](1);
         players[0] = PLAYER;
@@ -238,10 +272,26 @@ contract OCGBonusGameLedgerV2Test is Test {
             _amounts(10 ether),
             bps
         );
-        vm.expectRevert("WAGER_ALREADY_CONSUMED");
         ledger.cancel(round);
-        assertEq(bonus.balanceOf(PLAYER, BONUS_ID), 90 ether);
-        assertEq(bonus.wageredAmount(BONUS_ID), 10 ether);
+        assertEq(bonus.balanceOf(PLAYER, BONUS_ID), 100 ether);
+        assertEq(bonus.wageredAmount(BONUS_ID), 0);
+        assertEq(ledger.roundWagerContribution(round), 0);
+    }
+
+    function testCancellationAfterPartialReleaseRestoresOnlyUnreleasedReservation() public {
+        bytes32 round = _reserve(40 ether);
+        _consume(round, keccak256("cancel-consume"), 25 ether);
+        _release(round, keccak256("cancel-release"), 15 ether);
+
+        ledger.cancel(round);
+
+        assertEq(bonus.balanceOf(PLAYER, BONUS_ID), 100 ether);
+        assertEq(bonus.wageredAmount(BONUS_ID), 0);
+        (,,, uint256 reserved, uint256 consumed, uint256 released,, uint256 closedAt,) = ledger.rounds(round);
+        assertEq(reserved, 40 ether);
+        assertEq(consumed, 25 ether);
+        assertEq(released, 40 ether);
+        assertGt(closedAt, 0);
     }
 
     function testOpenRoundTransitionsKeepReservedBonusContractAfterRotation() public {

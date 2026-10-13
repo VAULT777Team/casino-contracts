@@ -11,7 +11,7 @@ import {IBankrollRegistry} from "../../bankroll/interfaces/IBankrollRegistry.sol
 /// @title House Game Ledger
 /// @notice Reserves player funds for off-chain house games and closes each round once.
 /// @dev Authorized operators submit player-funded ERC-20 reservations and final results.
-///      The ledger enforces reservation, maximum payout, refund, replay, player, and token constraints.
+///      The ledger enforces reservation, maximum payout, replay, player, and token constraints.
 contract HouseGameLedger is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -235,6 +235,7 @@ contract HouseGameLedger is ReentrancyGuard {
         emit RegistryUpdated(bankrollRegistry);
     }
 
+    /// @dev Retained for storage and ABI compatibility; this delay no longer authorizes player cancellation.
     function setRefundDelay(uint256 newRefundDelay) external onlyAdmin {
         if (newRefundDelay < MIN_REFUND_DELAY) revert RefundDelayTooShort();
         refundDelay = newRefundDelay;
@@ -339,9 +340,9 @@ contract HouseGameLedger is ReentrancyGuard {
         return item.amount;
     }
 
-    /// @notice Locks reserved rounds to their replay-protected settlement actions without disclosing outcomes.
-    /// @dev Each round can only be initiated once. If the bounded lock expires, it cannot be renewed and
-    ///      the player can recover through cancelRound once the normal refund delay has also elapsed.
+    /// @notice Binds reserved rounds to replay-protected settlement actions without disclosing outcomes.
+    /// @dev Each round can only be initiated once. The expiry bounds the initiation window but does not
+    ///      invalidate the bound settlement action or allow a player-triggered refund.
     function initiateSettlementBatch(bytes32 actionKey, SettlementInitiation[] calldata initiations, uint256 expiresAt)
         external
         onlyOperator
@@ -402,9 +403,6 @@ contract HouseGameLedger is ReentrancyGuard {
             if (round.lockedSettlementActionKey != settlement.actionKey) {
                 revert SettlementActionMismatch(settlement.roundKey);
             }
-            if (block.timestamp > round.settlementLockExpiresAt) {
-                revert SettlementLockExpired(settlement.roundKey, round.settlementLockExpiresAt);
-            }
             if (settlement.actualWager > round.reservation) {
                 revert WagerExceedsReservation();
             }
@@ -446,9 +444,8 @@ contract HouseGameLedger is ReentrancyGuard {
         }
     }
 
-    /// @notice Cancels a reservation. Operators/admins may cancel immediately;
-    ///         the bound player can force a refund after the configured delay.
-    function cancelRound(bytes32 actionKey, bytes32 roundKey) external nonReentrant {
+    /// @notice Cancels and refunds a reservation after the operator determines settlement cannot complete.
+    function cancelRound(bytes32 actionKey, bytes32 roundKey) external nonReentrant onlyOperator {
         if (actionKey == bytes32(0) || roundKey == bytes32(0)) {
             revert ZeroKey();
         }
@@ -459,18 +456,6 @@ contract HouseGameLedger is ReentrancyGuard {
             revert InvalidRoundStatus(roundKey, round.status);
         }
 
-        bool privileged = msg.sender == owner || isAdmin[msg.sender] || isOperator[msg.sender];
-        if (!privileged) {
-            if (msg.sender != round.player) revert NotPlayer();
-            if (round.settlementLockActionKey != bytes32(0) && block.timestamp <= round.settlementLockExpiresAt) {
-                revert SettlementLocked(roundKey, round.settlementLockExpiresAt);
-            }
-            uint256 availableAt = round.refundAt;
-            if (block.timestamp < availableAt) {
-                revert RefundNotAvailable(availableAt);
-            }
-        }
-
         actionUsed[actionKey] = true;
         round.status = RoundStatus.Cancelled;
         round.closedAt = uint64(block.timestamp);
@@ -478,11 +463,7 @@ contract HouseGameLedger is ReentrancyGuard {
         round.grossPlayerReturn = round.reservation;
 
         _payoutAndRelease(
-            round.player,
-            round.bankroll,
-            round.token,
-            round.reservation,
-            roundBankrollReservationAmount[roundKey]
+            round.player, round.bankroll, round.token, round.reservation, roundBankrollReservationAmount[roundKey]
         );
 
         emit RoundCancelled(actionKey, roundKey, round.player, round.reservation);
@@ -514,6 +495,7 @@ contract HouseGameLedger is ReentrancyGuard {
         return _rounds[roundKey].status;
     }
 
+    /// @dev Returns legacy metadata only; cancellation always requires an operator.
     function refundAvailableAt(bytes32 roundKey) external view returns (uint256) {
         Round storage round = _rounds[roundKey];
         if (round.status == RoundStatus.None) return 0;
