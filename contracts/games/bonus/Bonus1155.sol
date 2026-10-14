@@ -27,6 +27,7 @@ contract Bonus1155 is ERC1155Supply, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     bytes32 public constant PURCHASE_TYPEHASH = keccak256("VAULT_BONUS_PURCHASE");
+    bytes32 public constant TOP_UP_TYPEHASH = keccak256("VAULT_BONUS_TOP_UP");
     bytes32 public constant REDEEM_TYPEHASH = keccak256("VAULT_BONUS_REDEEM");
 
     struct Bonus {
@@ -79,6 +80,17 @@ contract Bonus1155 is ERC1155Supply, ReentrancyGuard {
         uint256 stake,
         uint256 wagerContribution,
         uint256 totalWagered
+    );
+    event BonusToppedUp(
+        uint256 indexed bonusId,
+        address indexed purchaser,
+        address indexed token,
+        uint256 payAmount,
+        uint256 mintAmount,
+        uint256 wagerRequirement,
+        uint256 totalPayAmount,
+        uint256 totalMintAmount,
+        uint256 totalWagerRequirement
     );
     event BonusStakeCancelled(
         uint256 indexed bonusId,
@@ -231,6 +243,60 @@ contract Bonus1155 is ERC1155Supply, ReentrancyGuard {
         _burn(player, bonusId, stake);
         bonus.wageredAmount += wagerContribution;
         emit BonusStakeDebited(bonusId, player, token, stake, wagerContribution, bonus.wageredAmount);
+    }
+
+    function topUpBonus(
+        uint256 bonusId,
+        uint256 payAmount,
+        uint256 mintAmount,
+        uint256 wagerRequirement,
+        uint256 validUntil,
+        uint256 nonce,
+        bytes calldata signature
+    ) external payable nonReentrant whenNotPaused {
+        Bonus storage bonus = _openBonus(bonusId, bonuses[bonusId].token);
+        require(bonus.purchaser == msg.sender, "NOT_PURCHASER");
+        require(balanceOf(msg.sender, bonusId) == totalSupply(bonusId), "BONUS_SHARED");
+        require(payAmount > 0, "ZERO_PAY");
+        require(mintAmount > 0, "ZERO_MINT");
+        require(wagerRequirement > 0, "ZERO_WR");
+        require(block.timestamp <= validUntil, "SIG_EXPIRED");
+        require(!usedNonces[msg.sender][nonce], "NONCE_USED");
+
+        bytes32 digest = keccak256(
+            abi.encode(
+                TOP_UP_TYPEHASH,
+                msg.sender,
+                bonusId,
+                bonus.token,
+                payAmount,
+                mintAmount,
+                wagerRequirement,
+                nonce,
+                address(this),
+                block.chainid,
+                validUntil
+            )
+        );
+        require(_recover(digest, signature) == backendSigner, "INVALID_SIGNATURE");
+        usedNonces[msg.sender][nonce] = true;
+        _collectAndDepositToBankroll(bonus.token, payAmount);
+
+        bonus.payAmount += payAmount;
+        bonus.mintAmount += mintAmount;
+        bonus.wagerRequirement += wagerRequirement;
+        _mint(msg.sender, bonusId, mintAmount, "");
+        emit BonusToppedUp(
+            bonusId,
+            msg.sender,
+            bonus.token,
+            payAmount,
+            mintAmount,
+            wagerRequirement,
+            bonus.payAmount,
+            bonus.mintAmount,
+            bonus.wagerRequirement
+        );
     }
 
     /// @notice Reverses a failed round after the settlement operator permanently abandons settlement.

@@ -100,6 +100,127 @@ contract Bonus1155Test is Test {
         assertEq(bonus.getBonus(bonusId).wageredAmount, 0);
     }
 
+    function testTopUpAddsBalanceAndRequirementsWithoutChangingExpiry() public {
+        bytes memory purchaseSignature = _purchaseSignature(PLAYER, 4);
+        vm.prank(PLAYER);
+        uint256 bonusId = bonus.purchaseBonus{value: 1 ether}(
+            address(0),
+            1 ether,
+            100 ether,
+            50 ether,
+            block.timestamp + 1 days,
+            false,
+            block.timestamp + 1 hours,
+            4,
+            purchaseSignature
+        );
+        uint256 originalExpiry = bonus.getBonus(bonusId).expiresAt;
+        bonus.debitStakeAndRecordWager(PLAYER, address(0), bonusId, 10 ether, 5 ether);
+        bytes memory topUpSignature = _topUpSignature(PLAYER, bonusId, 5);
+
+        vm.prank(PLAYER);
+        bonus.topUpBonus{value: 0.5 ether}(
+            bonusId,
+            0.5 ether,
+            75 ether,
+            37.5 ether,
+            block.timestamp + 1 hours,
+            5,
+            topUpSignature
+        );
+
+        Bonus1155.Bonus memory toppedUp = bonus.getBonus(bonusId);
+        assertEq(bonus.balanceOf(PLAYER, bonusId), 165 ether);
+        assertEq(toppedUp.payAmount, 1.5 ether);
+        assertEq(toppedUp.mintAmount, 175 ether);
+        assertEq(toppedUp.wagerRequirement, 87.5 ether);
+        assertEq(toppedUp.wageredAmount, 5 ether);
+        assertEq(toppedUp.expiresAt, originalExpiry);
+    }
+
+    function testTopUpRejectsNonPurchaser() public {
+        bytes memory purchaseSignature = _purchaseSignature(PLAYER, 6);
+        vm.prank(PLAYER);
+        uint256 bonusId = bonus.purchaseBonus{value: 1 ether}(
+            address(0), 1 ether, 100 ether, 50 ether, block.timestamp + 1 days, false, block.timestamp + 1 hours, 6, purchaseSignature
+        );
+
+        bytes memory topUpSignature = _topUpSignature(PLAYER, bonusId, 7);
+        vm.expectRevert("NOT_PURCHASER");
+        vm.prank(ATTACKER);
+        bonus.topUpBonus{value: 0.5 ether}(
+            bonusId, 0.5 ether, 75 ether, 37.5 ether, block.timestamp + 1 hours, 7, topUpSignature
+        );
+    }
+
+    function testTopUpRejectsSharedSupply() public {
+        bytes memory purchaseSignature = _purchaseSignatureWithTransferable(PLAYER, 8, true);
+        vm.prank(PLAYER);
+        uint256 bonusId = bonus.purchaseBonus{value: 1 ether}(
+            address(0), 1 ether, 100 ether, 50 ether, block.timestamp + 1 days, true, block.timestamp + 1 hours, 8, purchaseSignature
+        );
+        bonus.setTransfersEnabled(true);
+        vm.prank(PLAYER);
+        bonus.safeTransferFrom(PLAYER, ATTACKER, bonusId, 1 ether, "");
+
+        bytes memory topUpSignature = _topUpSignature(PLAYER, bonusId, 9);
+        vm.expectRevert("BONUS_SHARED");
+        vm.prank(PLAYER);
+        bonus.topUpBonus{value: 0.5 ether}(
+            bonusId, 0.5 ether, 75 ether, 37.5 ether, block.timestamp + 1 hours, 9, topUpSignature
+        );
+    }
+
+    function testTopUpRejectsExpiredBonus() public {
+        bytes memory purchaseSignature = _purchaseSignature(PLAYER, 10);
+        vm.prank(PLAYER);
+        uint256 bonusId = bonus.purchaseBonus{value: 1 ether}(
+            address(0), 1 ether, 100 ether, 50 ether, block.timestamp + 1 days, false, block.timestamp + 1 hours, 10, purchaseSignature
+        );
+        vm.warp(block.timestamp + 2 days);
+
+        bytes memory topUpSignature = _topUpSignature(PLAYER, bonusId, 11);
+        vm.expectRevert("BONUS_EXPIRED");
+        vm.prank(PLAYER);
+        bonus.topUpBonus{value: 0.5 ether}(
+            bonusId, 0.5 ether, 75 ether, 37.5 ether, block.timestamp + 1 hours, 11, topUpSignature
+        );
+    }
+
+    function testTopUpRejectsReusedNonce() public {
+        bytes memory purchaseSignature = _purchaseSignature(PLAYER, 12);
+        vm.prank(PLAYER);
+        uint256 bonusId = bonus.purchaseBonus{value: 1 ether}(
+            address(0), 1 ether, 100 ether, 50 ether, block.timestamp + 1 days, false, block.timestamp + 1 hours, 12, purchaseSignature
+        );
+        bytes memory topUpSignature = _topUpSignature(PLAYER, bonusId, 13);
+        vm.prank(PLAYER);
+        bonus.topUpBonus{value: 0.5 ether}(
+            bonusId, 0.5 ether, 75 ether, 37.5 ether, block.timestamp + 1 hours, 13, topUpSignature
+        );
+
+        vm.prank(PLAYER);
+        vm.expectRevert("NONCE_USED");
+        bonus.topUpBonus{value: 0.5 ether}(
+            bonusId, 0.5 ether, 75 ether, 37.5 ether, block.timestamp + 1 hours, 13, topUpSignature
+        );
+    }
+
+    function testTopUpSignatureBindsAmounts() public {
+        bytes memory purchaseSignature = _purchaseSignature(PLAYER, 14);
+        vm.prank(PLAYER);
+        uint256 bonusId = bonus.purchaseBonus{value: 1 ether}(
+            address(0), 1 ether, 100 ether, 50 ether, block.timestamp + 1 days, false, block.timestamp + 1 hours, 14, purchaseSignature
+        );
+
+        bytes memory topUpSignature = _topUpSignature(PLAYER, bonusId, 15);
+        vm.expectRevert("INVALID_SIGNATURE");
+        vm.prank(PLAYER);
+        bonus.topUpBonus{value: 0.6 ether}(
+            bonusId, 0.6 ether, 75 ether, 37.5 ether, block.timestamp + 1 hours, 15, topUpSignature
+        );
+    }
+
     function testLedgerCancellationStillWorksAfterExpiryWhilePaused() public {
         bytes memory signature = _purchaseSignature(PLAYER, 3);
         vm.prank(PLAYER);
@@ -125,6 +246,10 @@ contract Bonus1155Test is Test {
     }
 
     function _purchaseSignature(address buyer, uint256 nonce) private view returns (bytes memory) {
+        return _purchaseSignatureWithTransferable(buyer, nonce, false);
+    }
+
+    function _purchaseSignatureWithTransferable(address buyer, uint256 nonce, bool transferable) private view returns (bytes memory) {
         bytes32 digest = keccak256(
             abi.encode(
                 bonus.PURCHASE_TYPEHASH(),
@@ -134,7 +259,28 @@ contract Bonus1155Test is Test {
                 100 ether,
                 50 ether,
                 block.timestamp + 1 days,
-                false,
+                transferable,
+                nonce,
+                address(bonus),
+                block.chainid,
+                block.timestamp + 1 hours
+            )
+        );
+        (uint8 v, bytes32 r, bytes32 s) =
+            vm.sign(SIGNER_KEY, keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", digest)));
+        return abi.encodePacked(r, s, v);
+    }
+
+    function _topUpSignature(address buyer, uint256 bonusId, uint256 nonce) private view returns (bytes memory) {
+        bytes32 digest = keccak256(
+            abi.encode(
+                bonus.TOP_UP_TYPEHASH(),
+                buyer,
+                bonusId,
+                address(0),
+                0.5 ether,
+                75 ether,
+                37.5 ether,
                 nonce,
                 address(bonus),
                 block.chainid,
