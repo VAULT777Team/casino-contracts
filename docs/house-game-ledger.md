@@ -15,40 +15,41 @@ maximum payouts, and final settlement.
    but each explicit player funds their aligned reservation through an ERC-20
    allowance to the ledger. Native token reservations are rejected, so the
    operator pays gas only and never supplies wager principal.
-3. Funds are deposited into the current registry bankroll. By default, the
-   declared maximum payout is reserved in that bankroll. An owner-authorized
-   admin can call `setBankrollReservationsEnabled(false)` to disable BankLP
-   liquidity locking for future rounds. The immutable maximum payout remains
-   enforced even when no BankLP funds are reserved.
-4. Before outcomes are put in calldata, the operator calls
-   `initiateSettlementBatch` with the round keys, their already-derived
-   settlement action keys, and an expiry. This outcome-free transaction blocks
-   player cancellation for 1–30 minutes. A round can only be initiated once,
-   so an operator cannot keep renewing a stale lock.
-5. After initiation confirms, the operator calls `settleBatch`. Every item must explicitly set
+3. Player funds remain escrowed in the ledger until settlement or cancellation.
+   By default, the declared maximum payout is also reserved in the current
+   registry bankroll. An owner-authorized admin can call
+   `setBankrollReservationsEnabled(false)` to disable BankLP liquidity locking
+   for future rounds. The immutable maximum payout remains enforced even when
+   no BankLP funds are reserved.
+4. The operator calls `settleBatch` directly with the deterministic settlement
+   action key derived from each round key. Protocol V2 has no settlement
+   initiation transaction. Every item must explicitly set
    `finalClose`, `actualWager <= reservation`, and `grossPlayerReturn` must
    include all unused reservation:
 
    `grossPlayerReturn >= reservation - actualWager`
 
-   The return is also bounded by the immutable maximum payout recorded during
-   reservation. Closed/cancelled rounds cannot be changed.
-6. Failed bankroll payouts become player-claimable pending payouts. Any
+   Settlement batches aggregate actual-wager deposits, player refunds, payouts,
+   and bankroll reserve releases by compatible account. The return remains
+   bounded by the immutable maximum payout recorded during reservation.
+   Closed/cancelled rounds cannot be changed.
+5. Failed bankroll payouts become player-claimable pending payouts. Any
    liquidity reserved for that round remains reserved until `claimPending`
    succeeds. Unreserved rounds remain claimable without attempting to release
    funds that were never locked.
 
-Every reserve, settle, and cancel action uses a globally replay-protected
-`actionKey`. `getRound` and `getRoundStatus` expose explicit round state.
+Reservation and cancellation actions use globally replay-protected action
+keys. Settlement keys are deterministic from their round keys, and closed
+round state prevents replay. `getRound` and `getRoundStatus` expose explicit
+round state.
 Backend game-policy changes affect only future reservations because each
 accepted round retains its signed maximum payout and bankroll binding.
 
-Players can force-cancel after `refundDelay`, except while a confirmed
-settlement lock is active. Once a lock expires, it cannot be renewed and the
-player can recover normally. The refund delay has an on-chain minimum of five
-minutes. Operators/admins can cancel earlier for recovery. Pausing blocks new
-reservations but deliberately leaves initiation, settlement, cancellation,
-and pending claims available.
+Authorized operators can cancel a round and return the full escrow when
+settlement cannot complete. `refundDelay` remains in the ABI for compatibility
+but does not authorize player cancellation. Pausing blocks new reservations
+but deliberately leaves settlement, cancellation, and pending claims
+available.
 
 Bankroll reservation mode is snapshotted per round. Changing
 `bankrollReservationsEnabled` affects only future reservations. Disabling it

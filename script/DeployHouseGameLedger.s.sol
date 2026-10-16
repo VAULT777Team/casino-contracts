@@ -18,5 +18,6 @@ contract DeployHouseGameLedger is Script {
         vm.stopBroadcast();
 
         console.log("HouseGameLedger:", address(ledger));
+        console.log("Protocol version:", ledger.PROTOCOL_VERSION());
     }
 }

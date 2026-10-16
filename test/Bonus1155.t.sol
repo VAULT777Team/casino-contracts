@@ -138,6 +138,62 @@ contract Bonus1155Test is Test {
         assertEq(toppedUp.expiresAt, originalExpiry);
     }
 
+    function testPolicyTopUpCanIncreaseRequirementAndResetProgress() public {
+        bytes memory purchaseSignature = _purchaseSignature(PLAYER, 16);
+        vm.prank(PLAYER);
+        uint256 bonusId = bonus.purchaseBonus{value: 1 ether}(
+            address(0), 1 ether, 100 ether, 50 ether, block.timestamp + 1 days, false, block.timestamp + 1 hours, 16, purchaseSignature
+        );
+        bonus.debitStakeAndRecordWager(PLAYER, address(0), bonusId, 10 ether, 5 ether);
+        bytes memory topUpSignature =
+            _policyTopUpSignature(PLAYER, bonusId, 37.5 ether, true, true, 17);
+
+        vm.prank(PLAYER);
+        bonus.topUpBonusWithPolicy{value: 0.5 ether}(
+            bonusId, 0.5 ether, 75 ether, 37.5 ether, true, true, block.timestamp + 1 hours, 17, topUpSignature
+        );
+
+        Bonus1155.Bonus memory toppedUp = bonus.getBonus(bonusId);
+        assertEq(toppedUp.wagerRequirement, 87.5 ether);
+        assertEq(toppedUp.wageredAmount, 0);
+    }
+
+    function testPolicyTopUpCanPreserveRequirementAndResetProgress() public {
+        bytes memory purchaseSignature = _purchaseSignature(PLAYER, 18);
+        vm.prank(PLAYER);
+        uint256 bonusId = bonus.purchaseBonus{value: 1 ether}(
+            address(0), 1 ether, 100 ether, 50 ether, block.timestamp + 1 days, false, block.timestamp + 1 hours, 18, purchaseSignature
+        );
+        bonus.debitStakeAndRecordWager(PLAYER, address(0), bonusId, 10 ether, 5 ether);
+        bytes memory topUpSignature =
+            _policyTopUpSignature(PLAYER, bonusId, 0, false, true, 19);
+
+        vm.prank(PLAYER);
+        bonus.topUpBonusWithPolicy{value: 0.5 ether}(
+            bonusId, 0.5 ether, 75 ether, 0, false, true, block.timestamp + 1 hours, 19, topUpSignature
+        );
+
+        Bonus1155.Bonus memory toppedUp = bonus.getBonus(bonusId);
+        assertEq(toppedUp.wagerRequirement, 50 ether);
+        assertEq(toppedUp.wageredAmount, 0);
+    }
+
+    function testPolicyTopUpSignatureBindsPolicy() public {
+        bytes memory purchaseSignature = _purchaseSignature(PLAYER, 20);
+        vm.prank(PLAYER);
+        uint256 bonusId = bonus.purchaseBonus{value: 1 ether}(
+            address(0), 1 ether, 100 ether, 50 ether, block.timestamp + 1 days, false, block.timestamp + 1 hours, 20, purchaseSignature
+        );
+        bytes memory topUpSignature =
+            _policyTopUpSignature(PLAYER, bonusId, 37.5 ether, true, false, 21);
+
+        vm.expectRevert("INVALID_SIGNATURE");
+        vm.prank(PLAYER);
+        bonus.topUpBonusWithPolicy{value: 0.5 ether}(
+            bonusId, 0.5 ether, 75 ether, 37.5 ether, true, true, block.timestamp + 1 hours, 21, topUpSignature
+        );
+    }
+
     function testTopUpRejectsNonPurchaser() public {
         bytes memory purchaseSignature = _purchaseSignature(PLAYER, 6);
         vm.prank(PLAYER);
@@ -281,6 +337,36 @@ contract Bonus1155Test is Test {
                 0.5 ether,
                 75 ether,
                 37.5 ether,
+                nonce,
+                address(bonus),
+                block.chainid,
+                block.timestamp + 1 hours
+            )
+        );
+        (uint8 v, bytes32 r, bytes32 s) =
+            vm.sign(SIGNER_KEY, keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", digest)));
+        return abi.encodePacked(r, s, v);
+    }
+
+    function _policyTopUpSignature(
+        address buyer,
+        uint256 bonusId,
+        uint256 wagerRequirement,
+        bool increaseWagerRequirement,
+        bool resetWagerProgress,
+        uint256 nonce
+    ) private view returns (bytes memory) {
+        bytes32 digest = keccak256(
+            abi.encode(
+                bonus.TOP_UP_POLICY_TYPEHASH(),
+                buyer,
+                bonusId,
+                address(0),
+                0.5 ether,
+                75 ether,
+                wagerRequirement,
+                increaseWagerRequirement,
+                resetWagerProgress,
                 nonce,
                 address(bonus),
                 block.chainid,

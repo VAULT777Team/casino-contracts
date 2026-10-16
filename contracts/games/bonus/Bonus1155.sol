@@ -28,6 +28,7 @@ contract Bonus1155 is ERC1155Supply, ReentrancyGuard {
 
     bytes32 public constant PURCHASE_TYPEHASH = keccak256("VAULT_BONUS_PURCHASE");
     bytes32 public constant TOP_UP_TYPEHASH = keccak256("VAULT_BONUS_TOP_UP");
+    bytes32 public constant TOP_UP_POLICY_TYPEHASH = keccak256("VAULT_BONUS_TOP_UP_POLICY");
     bytes32 public constant REDEEM_TYPEHASH = keccak256("VAULT_BONUS_REDEEM");
 
     struct Bonus {
@@ -91,6 +92,12 @@ contract Bonus1155 is ERC1155Supply, ReentrancyGuard {
         uint256 totalPayAmount,
         uint256 totalMintAmount,
         uint256 totalWagerRequirement
+    );
+    event BonusTopUpPolicyApplied(
+        uint256 indexed bonusId,
+        bool increasedWagerRequirement,
+        bool resetWagerProgress,
+        uint256 totalWageredAmount
     );
     event BonusStakeCancelled(
         uint256 indexed bonusId,
@@ -254,15 +261,8 @@ contract Bonus1155 is ERC1155Supply, ReentrancyGuard {
         uint256 nonce,
         bytes calldata signature
     ) external payable nonReentrant whenNotPaused {
-        Bonus storage bonus = _openBonus(bonusId, bonuses[bonusId].token);
-        require(bonus.purchaser == msg.sender, "NOT_PURCHASER");
-        require(balanceOf(msg.sender, bonusId) == totalSupply(bonusId), "BONUS_SHARED");
-        require(payAmount > 0, "ZERO_PAY");
-        require(mintAmount > 0, "ZERO_MINT");
+        Bonus storage bonus = _validateTopUp(bonusId, payAmount, mintAmount, validUntil, nonce);
         require(wagerRequirement > 0, "ZERO_WR");
-        require(block.timestamp <= validUntil, "SIG_EXPIRED");
-        require(!usedNonces[msg.sender][nonce], "NONCE_USED");
-
         bytes32 digest = keccak256(
             abi.encode(
                 TOP_UP_TYPEHASH,
@@ -279,12 +279,84 @@ contract Bonus1155 is ERC1155Supply, ReentrancyGuard {
             )
         );
         require(_recover(digest, signature) == backendSigner, "INVALID_SIGNATURE");
+        _applyTopUp(bonus, bonusId, payAmount, mintAmount, wagerRequirement, true, false, nonce);
+    }
+
+    function topUpBonusWithPolicy(
+        uint256 bonusId,
+        uint256 payAmount,
+        uint256 mintAmount,
+        uint256 wagerRequirement,
+        bool increaseWagerRequirement,
+        bool resetWagerProgress,
+        uint256 validUntil,
+        uint256 nonce,
+        bytes calldata signature
+    ) external payable nonReentrant whenNotPaused {
+        Bonus storage bonus = _validateTopUp(bonusId, payAmount, mintAmount, validUntil, nonce);
+        require(increaseWagerRequirement ? wagerRequirement > 0 : wagerRequirement == 0, "INVALID_WR_POLICY");
+        bytes32 digest = keccak256(
+            abi.encode(
+                TOP_UP_POLICY_TYPEHASH,
+                msg.sender,
+                bonusId,
+                bonus.token,
+                payAmount,
+                mintAmount,
+                wagerRequirement,
+                increaseWagerRequirement,
+                resetWagerProgress,
+                nonce,
+                address(this),
+                block.chainid,
+                validUntil
+            )
+        );
+        require(_recover(digest, signature) == backendSigner, "INVALID_SIGNATURE");
+        _applyTopUp(
+            bonus,
+            bonusId,
+            payAmount,
+            mintAmount,
+            wagerRequirement,
+            increaseWagerRequirement,
+            resetWagerProgress,
+            nonce
+        );
+    }
+
+    function _validateTopUp(
+        uint256 bonusId,
+        uint256 payAmount,
+        uint256 mintAmount,
+        uint256 validUntil,
+        uint256 nonce
+    ) private view returns (Bonus storage bonus) {
+        bonus = _openBonus(bonusId, bonuses[bonusId].token);
+        require(bonus.purchaser == msg.sender, "NOT_PURCHASER");
+        require(balanceOf(msg.sender, bonusId) == totalSupply(bonusId), "BONUS_SHARED");
+        require(payAmount > 0, "ZERO_PAY");
+        require(mintAmount > 0, "ZERO_MINT");
+        require(block.timestamp <= validUntil, "SIG_EXPIRED");
+        require(!usedNonces[msg.sender][nonce], "NONCE_USED");
+    }
+
+    function _applyTopUp(
+        Bonus storage bonus,
+        uint256 bonusId,
+        uint256 payAmount,
+        uint256 mintAmount,
+        uint256 wagerRequirement,
+        bool increaseWagerRequirement,
+        bool resetWagerProgress,
+        uint256 nonce
+    ) private {
         usedNonces[msg.sender][nonce] = true;
         _collectAndDepositToBankroll(bonus.token, payAmount);
-
         bonus.payAmount += payAmount;
         bonus.mintAmount += mintAmount;
-        bonus.wagerRequirement += wagerRequirement;
+        if (increaseWagerRequirement) bonus.wagerRequirement += wagerRequirement;
+        if (resetWagerProgress) bonus.wageredAmount = 0;
         _mint(msg.sender, bonusId, mintAmount, "");
         emit BonusToppedUp(
             bonusId,
@@ -296,6 +368,9 @@ contract Bonus1155 is ERC1155Supply, ReentrancyGuard {
             bonus.payAmount,
             bonus.mintAmount,
             bonus.wagerRequirement
+        );
+        emit BonusTopUpPolicyApplied(
+            bonusId, increaseWagerRequirement, resetWagerProgress, bonus.wageredAmount
         );
     }
 
