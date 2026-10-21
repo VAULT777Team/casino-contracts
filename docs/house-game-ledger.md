@@ -22,8 +22,10 @@ maximum payouts, and final settlement.
    for future rounds. The immutable maximum payout remains enforced even when
    no BankLP funds are reserved.
 4. The operator calls `settleBatch` directly with the deterministic settlement
-   action key derived from each round key. Protocol V2 has no settlement
-   initiation transaction. Every item must explicitly set
+   action key derived from each round key. Protocol V3 has no settlement
+   initiation transaction. One-shot games may instead call
+   `reserveAndSettleBatch` to reserve and close aligned rounds atomically.
+   Every settlement item must explicitly set
    `finalClose`, `actualWager <= reservation`, and `grossPlayerReturn` must
    include all unused reservation:
 
@@ -46,10 +48,13 @@ Backend game-policy changes affect only future reservations because each
 accepted round retains its signed maximum payout and bankroll binding.
 
 Authorized operators can cancel a round and return the full escrow when
-settlement cannot complete. `refundDelay` remains in the ABI for compatibility
-but does not authorize player cancellation. Pausing blocks new reservations
-but deliberately leaves settlement, cancellation, and pending claims
-available.
+settlement cannot complete. Each round snapshots `reservedAt + refundDelay` as its immutable `refundAt`.
+Settlement is permitted only before that timestamp. At or after the exact
+deadline, settlement reverts and the round player can call `refundRound`; the
+deterministic refund action returns the escrow and releases any bankroll
+reservation. Later admin changes affect only new rounds. Pausing
+blocks new reservations but deliberately leaves settlement, cancellation,
+player refunds, and pending claims available.
 
 Bankroll reservation mode is snapshotted per round. Changing
 `bankrollReservationsEnabled` affects only future reservations. Disabling it

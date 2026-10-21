@@ -69,7 +69,7 @@ contract BonusGameLedgerTest is Test {
 
         assertEq(bonus.wageredAmount(BONUS_ID), 25 ether);
         assertEq(bonus.balanceOf(PLAYER, BONUS_ID), 105 ether);
-        (,,,, uint256 consumed, uint256 released,, uint256 closedAt,) = ledger.rounds(round);
+        (,,,, uint256 consumed, uint256 released,, uint256 closedAt,,) = ledger.rounds(round);
         assertEq(consumed, 25 ether);
         assertEq(released, 15 ether);
         assertGt(closedAt, 0);
@@ -101,6 +101,30 @@ contract BonusGameLedgerTest is Test {
         _settle(round, keccak256("settle"), 20 ether);
         vm.expectRevert("ROUND_CLOSED");
         _settle(round, keccak256("settle-again"), 1 ether);
+    }
+
+    function testReserveAndSettleBatchIsAtomicForOneShotBonusRounds() public {
+        bytes32 round = keccak256("atomic-bonus-round");
+        BonusGameLedger.AtomicSettlement[] memory settlements = new BonusGameLedger.AtomicSettlement[](1);
+        settlements[0] = BonusGameLedger.AtomicSettlement({
+            player: PLAYER,
+            reservationActionKey: keccak256("atomic-bonus-reserve"),
+            settlementActionKey: keccak256("atomic-bonus-settle"),
+            roundKey: round,
+            stake: 10 ether,
+            wagerContributionBps: 10_000,
+            payout: 15 ether
+        });
+
+        ledger.reserveAndSettleBatch(TOKEN, BONUS_ID, settlements);
+
+        assertEq(bonus.balanceOf(PLAYER, BONUS_ID), 105 ether);
+        assertEq(bonus.wageredAmount(BONUS_ID), 10 ether);
+        (,,, uint256 reserved, uint256 consumed, uint256 released,, uint256 closedAt,,) = ledger.rounds(round);
+        assertEq(reserved, 10 ether);
+        assertEq(consumed, 10 ether);
+        assertEq(released, 0);
+        assertGt(closedAt, 0);
     }
 
     function testOnlyOperatorsCanMutate() public {
@@ -245,6 +269,58 @@ contract BonusGameLedgerTest is Test {
         assertEq(bonus.wageredAmount(BONUS_ID), 0);
     }
 
+    function testPlayerCanCancelOnlyAfterRefundDelay() public {
+        bytes32 round = _reserve(10 ether);
+
+        vm.prank(PLAYER);
+        vm.expectRevert("REFUND_NOT_AVAILABLE");
+        ledger.cancel(round);
+
+        vm.warp(block.timestamp + ledger.cancelTimeframe());
+        vm.prank(PLAYER);
+        ledger.cancel(round);
+
+        assertEq(bonus.balanceOf(PLAYER, BONUS_ID), 100 ether);
+    }
+
+    function testSettlementAndReleaseRejectAtRefundDeadline() public {
+        bytes32 settlementRound = _reserve(10 ether);
+        _consume(settlementRound, keccak256("deadline-consume"), 10 ether);
+        vm.warp(block.timestamp + ledger.cancelTimeframe());
+
+        vm.expectRevert("SETTLEMENT_WINDOW_EXPIRED");
+        _settle(settlementRound, keccak256("deadline-settle"), 10 ether);
+
+        vm.prank(PLAYER);
+        ledger.cancel(settlementRound);
+        assertEq(bonus.balanceOf(PLAYER, BONUS_ID), 100 ether);
+
+        bytes32 releaseRound = _reserve(11 ether);
+        vm.warp(block.timestamp + ledger.cancelTimeframe());
+        vm.expectRevert("SETTLEMENT_WINDOW_EXPIRED");
+        _release(releaseRound, keccak256("deadline-release"), 11 ether);
+    }
+
+    function testRefundDelayHasContractMinimum() public {
+        uint256 minimumDelay = ledger.MIN_REFUND_DELAY();
+        vm.expectRevert("REFUND_DELAY_TOO_SHORT");
+        ledger.setCancelTimeframe(minimumDelay - 1);
+    }
+
+    function testRefundDeadlineIsSnapshottedPerRound() public {
+        bytes32 round = _reserve(10 ether);
+        (,,,,,,,,, uint256 refundAt) = ledger.rounds(round);
+        ledger.setCancelTimeframe(30 minutes);
+        vm.warp(refundAt);
+
+        vm.expectRevert("SETTLEMENT_WINDOW_EXPIRED");
+        _release(round, keccak256("snapshotted-deadline-release"), 10 ether);
+
+        vm.prank(PLAYER);
+        ledger.cancel(round);
+        assertEq(bonus.balanceOf(PLAYER, BONUS_ID), 100 ether);
+    }
+
     function testSettlementOperatorCanCancelAfterLegacyTimeframe() public {
         bytes32 round = _reserve(10 ether);
         vm.warp(block.timestamp + ledger.cancelTimeframe() + 1);
@@ -252,7 +328,7 @@ contract BonusGameLedgerTest is Test {
         ledger.cancel(round);
 
         assertEq(bonus.balanceOf(PLAYER, BONUS_ID), 100 ether);
-        (,,,,, uint256 released,, uint256 closedAt,) = ledger.rounds(round);
+        (,,,,, uint256 released,, uint256 closedAt,,) = ledger.rounds(round);
         assertEq(released, 10 ether);
         assertGt(closedAt, 0);
     }
@@ -287,7 +363,7 @@ contract BonusGameLedgerTest is Test {
 
         assertEq(bonus.balanceOf(PLAYER, BONUS_ID), 100 ether);
         assertEq(bonus.wageredAmount(BONUS_ID), 0);
-        (,,, uint256 reserved, uint256 consumed, uint256 released,, uint256 closedAt,) = ledger.rounds(round);
+        (,,, uint256 reserved, uint256 consumed, uint256 released,, uint256 closedAt,,) = ledger.rounds(round);
         assertEq(reserved, 40 ether);
         assertEq(consumed, 25 ether);
         assertEq(released, 40 ether);
@@ -309,7 +385,7 @@ contract BonusGameLedgerTest is Test {
         assertEq(bonus.wageredAmount(BONUS_ID), 10 ether);
         assertEq(bonusB.balanceOf(PLAYER, BONUS_ID), 100 ether);
         assertEq(bonusB.wageredAmount(BONUS_ID), 0);
-        (,,,,,,,, address roundBonusContract) = ledger.rounds(round);
+        (,,,,,,,, address roundBonusContract,) = ledger.rounds(round);
         assertEq(roundBonusContract, address(bonus));
     }
 
@@ -334,7 +410,7 @@ contract BonusGameLedgerTest is Test {
 
         assertEq(bonus.balanceOf(PLAYER, BONUS_ID), 100 ether);
         assertEq(bonusB.balanceOf(PLAYER, BONUS_ID), 90 ether);
-        (,,,,,,,, address roundBonusContract) = ledger.rounds(round);
+        (,,,,,,,, address roundBonusContract,) = ledger.rounds(round);
         assertEq(roundBonusContract, address(bonusB));
     }
 

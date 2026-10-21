@@ -2,7 +2,10 @@
 pragma solidity ^0.8.0;
 
 import { BankrollRegistry } from "../bankroll/BankrollRegistry.sol";
-import { BankLP } from "../bankroll/facets/BankLP.sol";
+
+interface IBankLP {
+    function setGameCreator(address gameContract, address owner, uint256 feePercentage) external;
+}
 
 contract GameRegistry {
     struct GameInfo {
@@ -34,7 +37,7 @@ contract GameRegistry {
         }));
         ownerGames[owner].push(games.length - 1);
         
-        BankLP(payable(currentBankroll)).setGameCreator(gameContract, owner, 100); // Example fee percentage
+        IBankLP(payable(currentBankroll)).setGameCreator(gameContract, owner, 100); // Example fee percentage
         
         emit GameRegistered(owner, gameContract, nftId, configURI);
     }

@@ -26,6 +26,18 @@ interface IBonus1155V2 {
 contract BonusGameLedger {
     uint256 private constant _NOT_ENTERED = 1;
     uint256 private constant _ENTERED = 2;
+    uint256 public constant PROTOCOL_VERSION = 3;
+    uint256 public constant MIN_REFUND_DELAY = 5 minutes;
+
+    struct AtomicSettlement {
+        address player;
+        bytes32 reservationActionKey;
+        bytes32 settlementActionKey;
+        bytes32 roundKey;
+        uint256 stake;
+        uint16 wagerContributionBps;
+        uint256 payout;
+    }
 
     struct BonusRound {
         address player;
@@ -37,6 +49,7 @@ contract BonusGameLedger {
         uint256 openedAt;
         uint256 closedAt;
         address bonusContract;
+        uint256 refundAt;
     }
 
     address public owner;
@@ -222,8 +235,8 @@ contract BonusGameLedger {
         maxPayoutMultiplierX = value;
     }
 
-    /// @dev Retained for storage and ABI compatibility; settlement-operator cancellation no longer expires.
     function setCancelTimeframe(uint256 value) external onlyOwnerOrAdmin {
+        require(value >= MIN_REFUND_DELAY, "REFUND_DELAY_TOO_SHORT");
         cancelTimeframe = value;
     }
 
@@ -259,8 +272,43 @@ contract BonusGameLedger {
             round.reserved = amounts[i];
             round.openedAt = block.timestamp;
             round.bonusContract = bonusContract;
+            round.refundAt = block.timestamp + cancelTimeframe;
             IBonus1155V2(round.bonusContract).debitStakeAndRecordWager(player, token, bonusId, amounts[i], 0);
             emit BonusReserved(actionKeys[i], roundKeys[i], player, token, bonusId, amounts[i]);
+        }
+    }
+
+    /// @notice Atomically places and settles one-shot bonus rounds.
+    function reserveAndSettleBatch(address token, uint256 bonusId, AtomicSettlement[] calldata settlements)
+        external
+        onlyBetOperator
+        nonReentrant
+        whenNotPaused
+        returns (uint256 totalStake, uint256 totalContribution)
+    {
+        require(isSettleOperator[msg.sender], "NOT_SETTLE_OPERATOR");
+        uint256 n = settlements.length;
+        require(n > 0, "LEN");
+        for (uint256 i; i < n; ++i) {
+            AtomicSettlement calldata settlement = settlements[i];
+            uint256 contribution = _placeImmediateBet(
+                token,
+                bonusId,
+                settlement.player,
+                settlement.reservationActionKey,
+                settlement.roundKey,
+                settlement.stake,
+                settlement.wagerContributionBps
+            );
+            _settleBonusRound(
+                token,
+                bonusId,
+                settlement.settlementActionKey,
+                settlement.roundKey,
+                settlement.payout
+            );
+            totalStake += settlement.stake;
+            totalContribution += contribution;
         }
     }
 
@@ -280,6 +328,7 @@ contract BonusGameLedger {
             require(wagerContributionBps[i] <= 10_000, "BAD_CONTRIBUTION");
             _useAction(actionKeys[i]);
             BonusRound storage round = _openRound(roundKeys[i], token, bonusId);
+            _requireSettlementWindow(round);
             require(round.consumed + round.released + amounts[i] <= round.reserved, "RESERVE_EXCEEDED");
             round.consumed += amounts[i];
             uint256 contribution = (amounts[i] * wagerContributionBps[i]) / 10_000;
@@ -308,6 +357,7 @@ contract BonusGameLedger {
             require(amounts[i] > 0, "ZERO_AMOUNT");
             _useAction(actionKeys[i]);
             BonusRound storage round = _openRound(roundKeys[i], token, bonusId);
+            _requireSettlementWindow(round);
             require(round.consumed + round.released + amounts[i] <= round.reserved, "RESERVE_EXCEEDED");
             round.released += amounts[i];
             IBonus1155V2(round.bonusContract).creditPayout(round.player, token, bonusId, amounts[i]);
@@ -326,13 +376,7 @@ contract BonusGameLedger {
         uint256 n = actionKeys.length;
         require(n > 0 && roundKeys.length == n && payouts.length == n, "LEN");
         for (uint256 i; i < n; ++i) {
-            _useAction(actionKeys[i]);
-            BonusRound storage round = _openRound(roundKeys[i], token, bonusId);
-            require(round.consumed + round.released == round.reserved, "RESERVE_OPEN");
-            require(payouts[i] <= round.consumed * maxPayoutMultiplierX, "PAYOUT_LIMIT");
-            round.closedAt = block.timestamp;
-            IBonus1155V2(round.bonusContract).creditPayout(round.player, token, bonusId, payouts[i]);
-            emit BetSettled(actionKeys[i], roundKeys[i], round.player, token, bonusId, payouts[i]);
+            _settleBonusRound(token, bonusId, actionKeys[i], roundKeys[i], payouts[i]);
         }
     }
 
@@ -361,10 +405,15 @@ contract BonusGameLedger {
         }
     }
 
-    function cancel(bytes32 roundKey) external onlySettleOperator nonReentrant whenNotPaused {
+    function cancel(bytes32 roundKey) external nonReentrant whenNotPaused {
         BonusRound storage round = rounds[roundKey];
         require(round.player != address(0), "ROUND_NOT_FOUND");
         require(round.closedAt == 0, "ALREADY_SETTLED");
+        if (msg.sender == round.player) {
+            require(block.timestamp >= round.refundAt, "REFUND_NOT_AVAILABLE");
+        } else {
+            require(isSettleOperator[msg.sender], "NOT_SETTLE_OPERATOR");
+        }
         uint256 refund = round.reserved - round.released;
         uint256 contribution = roundWagerContribution[roundKey];
         roundWagerContribution[roundKey] = 0;
@@ -379,6 +428,27 @@ contract BonusGameLedger {
         require(actionKey != bytes32(0), "ZERO_ACTION");
         require(!actionUsed[actionKey], "DUP_ACTION");
         actionUsed[actionKey] = true;
+    }
+
+    function _settleBonusRound(
+        address token,
+        uint256 bonusId,
+        bytes32 actionKey,
+        bytes32 roundKey,
+        uint256 payout
+    ) private {
+        _useAction(actionKey);
+        BonusRound storage round = _openRound(roundKey, token, bonusId);
+        _requireSettlementWindow(round);
+        require(round.consumed + round.released == round.reserved, "RESERVE_OPEN");
+        require(payout <= round.consumed * maxPayoutMultiplierX, "PAYOUT_LIMIT");
+        round.closedAt = block.timestamp;
+        IBonus1155V2(round.bonusContract).creditPayout(round.player, token, bonusId, payout);
+        emit BetSettled(actionKey, roundKey, round.player, token, bonusId, payout);
+    }
+
+    function _requireSettlementWindow(BonusRound storage round) private view {
+        require(block.timestamp < round.refundAt, "SETTLEMENT_WINDOW_EXPIRED");
     }
 
     function _setBetOperator(address operator, bool allowed) private {
@@ -433,6 +503,7 @@ contract BonusGameLedger {
             round.bonusId = bonusId;
             round.openedAt = block.timestamp;
             round.bonusContract = bonusContract;
+            round.refundAt = block.timestamp + cancelTimeframe;
         } else {
             require(
                 round.player == player && round.token == token && round.bonusId == bonusId && round.closedAt == 0,

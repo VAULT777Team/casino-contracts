@@ -15,8 +15,9 @@ import {IBankrollRegistry} from "../../bankroll/interfaces/IBankrollRegistry.sol
 contract HouseGameLedger is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    uint256 public constant PROTOCOL_VERSION = 2;
+    uint256 public constant PROTOCOL_VERSION = 3;
     bytes32 public constant SETTLEMENT_ACTION_DOMAIN = keccak256("vault777.house-game.settlement.v2");
+    bytes32 public constant REFUND_ACTION_DOMAIN = keccak256("vault777.house-game.refund.v2");
     uint256 public constant MIN_REFUND_DELAY = 5 minutes;
 
     enum RoundStatus {
@@ -72,6 +73,7 @@ contract HouseGameLedger is ReentrancyGuard {
         uint128 bankrollReservation;
         uint128 actualWager;
         uint128 grossPlayerReturn;
+        uint256 refundAt;
     }
 
     struct PendingPayout {
@@ -124,12 +126,15 @@ contract HouseGameLedger is ReentrancyGuard {
     error NotOwner();
     error NotPlayer();
     error Paused();
+    error PlayersNotSorted(address previousPlayer, address currentPlayer);
     error PayoutLimitExceeded();
     error ReservationTooSmall();
     error RefundNotAvailable(uint256 availableAt);
     error RefundDelayTooShort();
+    error RoundKeyMismatch(bytes32 reservationRoundKey, bytes32 settlementRoundKey);
     error RoundAlreadyExists(bytes32 roundKey);
     error SettlementActionMismatch(bytes32 roundKey);
+    error SettlementWindowExpired(bytes32 roundKey, uint256 expiredAt);
     error TokenNotAllowed();
     error UnusedReservationNotReturned();
     error WagerExceedsReservation();
@@ -283,12 +288,41 @@ contract HouseGameLedger is ReentrancyGuard {
 
     /// @notice Reserves ERC-20-funded rounds submitted by an authorized operator for explicit players.
     /// @dev Players and reservations are aligned one-to-one. Each player must approve this ledger
-    ///      for the corresponding reservation amount.
+    ///      for the sum of their reservation amounts in the batch.
     function reserveBatchFor(address token, address[] calldata players, Reservation[] calldata reservations)
         external
         onlyOperator
         nonReentrant
         whenNotPaused
+    {
+        _reserveBatchFor(token, players, reservations);
+    }
+
+    /// @notice Atomically reserves player funds and closes one-shot rounds in the same transaction.
+    /// @dev Reservation and settlement arrays are aligned one-to-one and settlement keys remain deterministic.
+    function reserveAndSettleBatch(
+        address token,
+        address[] calldata players,
+        Reservation[] calldata reservations,
+        Settlement[] calldata settlements
+    ) external onlyOperator nonReentrant whenNotPaused {
+        uint256 count = reservations.length;
+        if (count == 0 || settlements.length != count) revert BatchLengthMismatch();
+        for (uint256 i; i < count;) {
+            if (reservations[i].roundKey != settlements[i].roundKey) {
+                revert RoundKeyMismatch(reservations[i].roundKey, settlements[i].roundKey);
+            }
+            unchecked {
+                ++i;
+            }
+        }
+
+        _reserveBatchFor(token, players, reservations);
+        _settleBatch(settlements);
+    }
+
+    function _reserveBatchFor(address token, address[] calldata players, Reservation[] calldata reservations)
+        private
     {
         uint256 count = reservations.length;
         if (count == 0 || players.length != count) revert BatchLengthMismatch();
@@ -296,19 +330,35 @@ contract HouseGameLedger is ReentrancyGuard {
 
         address bankroll = _currentBankroll(token);
         uint256 totalBankrollReservation;
+        address transferPlayer;
+        uint256 transferAmount;
 
         for (uint256 i; i < count;) {
             address player = players[i];
             if (player == address(0)) revert ZeroAddress();
+            if (transferPlayer != address(0) && uint160(player) < uint160(transferPlayer)) {
+                revert PlayersNotSorted(transferPlayer, player);
+            }
 
             uint256 reservationAmount = _recordReservation(player, token, bankroll, reservations[i]);
-            IERC20(token).safeTransferFrom(player, address(this), reservationAmount);
+            if (player == transferPlayer) {
+                transferAmount += reservationAmount;
+            } else {
+                if (transferPlayer != address(0)) {
+                    IERC20(token).safeTransferFrom(transferPlayer, address(this), transferAmount);
+                }
+                transferPlayer = player;
+                transferAmount = reservationAmount;
+            }
+
             totalBankrollReservation += roundBankrollReservationAmount[reservations[i].roundKey];
 
             unchecked {
                 ++i;
             }
         }
+
+        IERC20(token).safeTransferFrom(transferPlayer, address(this), transferAmount);
 
         if (totalBankrollReservation != 0) {
             IBankLP(bankroll).reserveFunds(token, totalBankrollReservation);
@@ -318,6 +368,11 @@ contract HouseGameLedger is ReentrancyGuard {
     function settlementActionKey(bytes32 roundKey) public pure returns (bytes32) {
         if (roundKey == bytes32(0)) revert ZeroKey();
         return keccak256(abi.encode(SETTLEMENT_ACTION_DOMAIN, roundKey));
+    }
+
+    function refundActionKey(bytes32 roundKey) public pure returns (bytes32) {
+        if (roundKey == bytes32(0)) revert ZeroKey();
+        return keccak256(abi.encode(REFUND_ACTION_DOMAIN, roundKey));
     }
 
     function _currentBankroll(address token) private view returns (address bankroll) {
@@ -356,6 +411,8 @@ contract HouseGameLedger is ReentrancyGuard {
         round.bankroll = bankroll;
         round.reservedAt = uint64(block.timestamp);
         round.reservation = uint128(item.amount);
+        round.refundAt = block.timestamp + refundDelay;
+
         round.bankrollReservation = uint128(riskReservation);
         roundBankrollReservationAmount[item.roundKey] =
             bankrollReservationsEnabled ? riskReservation : 0;
@@ -368,6 +425,10 @@ contract HouseGameLedger is ReentrancyGuard {
 
     /// @notice Atomically records final outcomes using deterministic settlement keys.
     function settleBatch(Settlement[] calldata settlements) external nonReentrant onlyOperator {
+        _settleBatch(settlements);
+    }
+
+    function _settleBatch(Settlement[] calldata settlements) private {
         uint256 count = settlements.length;
         if (count == 0) revert BatchLengthMismatch();
 
@@ -384,6 +445,10 @@ contract HouseGameLedger is ReentrancyGuard {
             RoundData storage round = _rounds[settlement.roundKey];
             if (round.status != RoundStatus.Reserved) {
                 revert InvalidRoundStatus(settlement.roundKey, round.status);
+            }
+            uint256 refundAt = round.refundAt;
+            if (block.timestamp >= refundAt) {
+                revert SettlementWindowExpired(settlement.roundKey, refundAt);
             }
             bytes32 expectedActionKey = settlementActionKey(settlement.roundKey);
             if (settlement.actionKey != expectedActionKey) {
@@ -571,6 +636,23 @@ contract HouseGameLedger is ReentrancyGuard {
 
     /// @notice Cancels and refunds a reservation after the operator determines settlement cannot complete.
     function cancelRound(bytes32 actionKey, bytes32 roundKey) external nonReentrant onlyOperator {
+        _cancelRound(actionKey, roundKey);
+    }
+
+    /// @notice Refunds a reservation to its player once the settlement deadline has passed.
+    function refundRound(bytes32 roundKey) external nonReentrant {
+        if (roundKey == bytes32(0)) revert ZeroKey();
+        RoundData storage round = _rounds[roundKey];
+        if (round.status != RoundStatus.Reserved) {
+            revert InvalidRoundStatus(roundKey, round.status);
+        }
+        if (msg.sender != round.player) revert NotPlayer();
+        uint256 availableAt = round.refundAt;
+        if (block.timestamp < availableAt) revert RefundNotAvailable(availableAt);
+        _cancelRound(refundActionKey(roundKey), roundKey);
+    }
+
+    function _cancelRound(bytes32 actionKey, bytes32 roundKey) private {
         if (actionKey == bytes32(0) || roundKey == bytes32(0)) {
             revert ZeroKey();
         }
@@ -624,7 +706,7 @@ contract HouseGameLedger is ReentrancyGuard {
             bankroll: round.bankroll,
             reservedAt: round.reservedAt,
             closedAt: round.closedAt,
-            refundAt: round.status == RoundStatus.None ? 0 : uint256(round.reservedAt) + refundDelay,
+            refundAt: round.refundAt,
             reservation: round.reservation,
             bankrollReservation: round.bankrollReservation,
             actualWager: round.actualWager,
@@ -639,11 +721,10 @@ contract HouseGameLedger is ReentrancyGuard {
         return _rounds[roundKey].status;
     }
 
-    /// @dev Returns legacy metadata only; cancellation always requires an operator.
     function refundAvailableAt(bytes32 roundKey) external view returns (uint256) {
         RoundData storage round = _rounds[roundKey];
         if (round.status == RoundStatus.None) return 0;
-        return uint256(round.reservedAt) + refundDelay;
+        return round.refundAt;
     }
 
 }

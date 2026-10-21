@@ -6,8 +6,6 @@ import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeE
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 import {Treasury } from '../../treasury/Treasury.sol';
-import {GameFactory} from "../../sdk/GameFactory.sol";
-
 import {IBankrollRegistry} from "../interfaces/IBankrollRegistry.sol";
 
 interface IToken is IERC20 {
@@ -29,24 +27,11 @@ contract BankLP is WithStorage {
     mapping(address => bool) internal suspended;
     mapping(address => uint256) internal suspendedAt;
 
-    mapping(address => uint256) public playRewards;
-    mapping(address => uint256) public fees;
-
     mapping(address => uint256) public reservedFunds;
 
-    // Game creator fee share (basis points, e.g. 500 = 5%)
-    mapping(address => uint256) public creatorFeeBps;
-    mapping(address => address) public gameCreator;
-
     // Core contracts
-    Treasury public treasury;
-    GameFactory public factory;
+    address payable public treasury;
     address public liquidityPool;
-
-    // play2earn
-    address public playRewardToken;
-    uint256 public minRewardPayout = 10 * 10**18; // 10 min playback payout
-    uint256 public playReward = 300; // 3% playback earnings
 
     /**
      * @dev event emitted when game is Added or Removed
@@ -140,18 +125,6 @@ contract BankLP is WithStorage {
         );
     }
 
-    modifier onlyGameFactoryOrOwner() {
-        _onlyGameFactoryOrOwner();
-        _;
-    }
-
-    function _onlyGameFactoryOrOwner() internal view {
-        require(
-            msg.sender == address(factory) || msg.sender == owner,
-            "Not game factory or owner"
-        );
-    }
-
     modifier onlyLPOrOwner() {
         _onlyLPOrOwner();
         _;
@@ -175,13 +148,11 @@ contract BankLP is WithStorage {
 
     constructor(
         address _treasury, 
-        address _registry, 
-        address _factory
+        address _registry
     ) {
         owner = msg.sender;
-        treasury = Treasury(payable(_treasury));
+        treasury = payable(_treasury);
         registry = _registry;
-        factory = GameFactory(_factory);
     }
     
     /**
@@ -212,10 +183,6 @@ contract BankLP is WithStorage {
     function setRegistry(address _registry) external onlyOwner {
         registry = _registry;
     }
-    
-    function setGameFactory(address _factory) external onlyOwner {
-        factory = GameFactory(_factory);
-    }
 
     function setOwner(address _owner) external onlyOwner {
         owner = _owner;
@@ -226,22 +193,13 @@ contract BankLP is WithStorage {
     }
 
     function setTreasury(address _treasury) external onlyOwner {
-        treasury = Treasury(payable(_treasury));
+        treasury = payable(_treasury);
     }
 
     function setLiquidityPool(address _liquidityPool) external onlyOwner {
         liquidityPool = _liquidityPool;
     }
 
-    function setPlayRewardToken(address _token) external onlyOwner {
-        playRewardToken = _token;
-    }
-
-    function setRewardMultiplier(uint256 _reward) external onlyOwner {
-        playReward = _reward;
-        emit Bankroll_Player_Rewards_Multiplier_Updated(_reward);
-    }
-    
     // reserveFunds
     
     /**
@@ -310,34 +268,6 @@ contract BankLP is WithStorage {
         return available >= maxPayout;
     }
 
-    // playRewards
-    function getPlayerReward() external view returns (uint256) {
-        return playReward;
-    }
-
-    /// @notice Calculate the play2earn reward for a given wager.
-    /// @dev Computes the reward in the wager token's units, then normalizes the result
-    ///      to the decimals of `playRewardToken` (or 18 if not set).
-    ///      Uses the same multiplier semantics as existing game logic: `reward = wager * playReward / 1000`.
-    function calculatePlayReward(address wagerToken, uint256 wagerAmount) public view returns (uint256) {
-        if (playReward == 0 || wagerAmount == 0) return 0;
-
-        // Preserve existing semantics from Common.sol: playReward is per-mille (e.g. 300 = 30%).
-        uint256 rewardInWagerUnits = (wagerAmount * playReward) / 1000;
-
-        uint8 wagerDecimals = _decimalsOr18(wagerToken);
-        uint8 rewardDecimals = _decimalsOr18(playRewardToken);
-        return _scaleDecimals(rewardInWagerUnits, wagerDecimals, rewardDecimals);
-    }
-
-    /// @dev Convenience method for games to add rewards based on wager token + amount.
-    function addPlayerRewardFromWager(address player, address wagerToken, uint256 wagerAmount) external onlyGame {
-        uint256 reward = calculatePlayReward(wagerToken, wagerAmount);
-        if (reward == 0) return;
-        playRewards[player] += reward;
-        emit Bankroll_Player_Rewards_Earned(player, reward);
-    }
-
     function _decimalsOr18(address token) internal view returns (uint8) {
         if (token == address(0)) return 18;
 
@@ -353,31 +283,6 @@ contract BankLP is WithStorage {
             return amount * (10 ** uint256(toDecimals - fromDecimals));
         }
         return amount / (10 ** uint256(fromDecimals - toDecimals));
-    }
-
-    function getPlayerRewards() external view returns (uint256) {
-        return playRewards[msg.sender];
-    }
-
-    function claimRewards() external {
-        uint256 rewards = playRewards[msg.sender];
-        require(rewards > minRewardPayout, 'not enough rewards acquired');
-        require(playRewardToken != address(0), 'no reward token set');
-
-        // update token rewards prior to transfer, against re-entrancy
-        playRewards[msg.sender] = 0;
-
-        IToken(playRewardToken).mint(rewards);
-        bool transferred = IToken(playRewardToken).transfer(msg.sender, rewards);
-        require(transferred, "IERC20: Transfer failed");
-
-
-        emit Bankroll_Player_Rewards_Claimed(msg.sender, rewards);
-    }
-
-    function addPlayerReward(address player, uint256 amount) external onlyGame {
-        playRewards[player] += amount;
-        emit Bankroll_Player_Rewards_Earned(player, amount);
     }
 
     /**
@@ -620,90 +525,22 @@ contract BankLP is WithStorage {
     }
 
     /*
-     * Deposit ETH from game contract to subtract fee
+     * @dev Deposit ETH from game contract
     */
     function depositEther() external payable returns (bool) {
-        bool success;
-        uint256 amount = msg.value;
-        uint256 amountAfterFee = amount * 98 / 100;
-        uint256 fee = amount - amountAfterFee;
-
-        fees[address(0)] += fee;
-
-        // Fee sharing logic
-        address game = msg.sender;
-        uint256 creatorShare = 0;
-        address creator = gameCreator[game];
-        uint256 creatorBps = creatorFeeBps[game];
-        if (creator != address(0) && creatorBps > 0) {
-            creatorShare = (fee * creatorBps) / 10000;
-            if (creatorShare > 0) {
-                (success, ) = payable(creator).call{ value: creatorShare }("");
-                require(success, "Creator ETH transfer failed");
-            }
-        }
-        
-        // 2nd half of fee to treasury, rest into liquidity pool
-        uint256 treasuryFee = (fee - creatorShare) / 2;
-        
-        (success, ) = payable(address(treasury)).call{ value: treasuryFee }("");
-        require(success, "Treasury transfer failed");
-
-        emit Bankroll_Received_Player_Deposit(address(0), amountAfterFee);
-        emit Bankroll_Treasury_Deposit(address(0), treasuryFee);
-
-        if (creatorShare > 0) {
-            emit CreatorFeePaid(game, creator, creatorShare, address(0));
-        }
-
-        return success;
+        emit Bankroll_Received_Player_Deposit(address(0), msg.value);
+        return true;
     }
-
-    event CreatorFeePaid(address indexed game, address indexed creator, uint256 amount, address token);
     
-    /*
-     * Deposit ERC20 from game contract to subtract fee
+    /**
+     * @dev Deposit ERC20 from game contract
+     * @param token Address of the ERC20 token
+     * @param amount Amount to deposit
     */
     function deposit(address token, uint256 amount) external {
-        uint256 amountAfterFee = amount * 98 / 100;
-        uint256 fee = amount - amountAfterFee;
-
-        fees[token] += fee;
         bool transferred = IERC20(token).transferFrom(msg.sender, address(this), amount);
         require(transferred, "IERC20: Transfer failed");
 
-        // Fee sharing logic
-        address game = msg.sender;
-        uint256 creatorShare = 0;
-        address creator = gameCreator[game];
-        uint256 creatorBps = creatorFeeBps[game];
-        if (creator != address(0) && creatorBps > 0) {
-            creatorShare = (fee * creatorBps) / 10000;
-            if (creatorShare > 0) {
-                (bool success) = IERC20(token).transfer(creator, creatorShare);
-                require(success, "Creator token transfer failed");
-            }
-        }
-        
-        // 2nd half of fee to treasury, rest back into LP
-        uint256 treasuryFee = (fee - creatorShare) / 2;
-
-        IERC20(token).approve(address(treasury), treasuryFee);
-        treasury.deposit(token, treasuryFee);
-
-        emit Bankroll_Received_Player_Deposit(token, amountAfterFee);
-        emit Bankroll_Treasury_Deposit(token, treasuryFee);
-
-        if (creatorShare > 0) {
-            emit CreatorFeePaid(game, creator, creatorShare, token);
-        }
+        emit Bankroll_Received_Player_Deposit(token, amount);
     }
-
-    // Called by factory/owner to set creator and fee share for a game
-    function setGameCreator(address game, address creator, uint256 feeBps) external onlyGameFactoryOrOwner {
-        require(feeBps <= 2000, "Fee too high"); // Max 20%
-        gameCreator[game] = creator;
-        creatorFeeBps[game] = feeBps;
-    }
-
 }

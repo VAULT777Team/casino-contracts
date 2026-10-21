@@ -10,26 +10,38 @@ authorize only one ledger, so rollout must:
 4. set `BONUS_GAME_LEDGER_V2_ADDRESS` (and, after migration,
    `BONUS_GAME_LEDGER_ADDRESS`) in the Vault777 game services.
 
+The replacement reports protocol version 3. Services must keep existing
+protocol-v2 ledgers on the legacy reserve/consume/release/settle flow and use
+`reserveAndSettleBatch` only after the configured on-chain ledger reports
+version 3.
+
 Interactive rounds reserve by burning the maximum exposure with zero wagering
 contribution. Each base/split/double/side-bet consume action temporarily credits
 then re-debits its slice, leaving the lock unchanged while recording only actual
 wager contribution. Release credits unused reserve. Settlement is final and is
 allowed only when the full reserve is consumed or released.
 
-Only a settlement operator can cancel a round. Cancellation refunds the
-unreleased reservation and subtracts the exact wagering contribution recorded
-for that round. The ERC-1155 rollback remains available after bonus expiry and
-while normal bonus activity is paused so a confirmed permanent settlement
-failure cannot strand the player's balance or wagering progress. Players cannot
-cancel their own reservations or rounds.
+A settlement operator can cancel a round for operational recovery. Once
+the round's snapshotted `refundAt` is reached, the round player can also call
+`cancel`. Changing `cancelTimeframe` affects only later rounds. Cancellation
+refunds the unreleased reservation and subtracts the exact wagering
+contribution recorded for that round. Consume, release, and settlement all
+revert at or after that deadline, so a result cannot be applied after the
+player refund window opens. The ERC-1155 rollback remains available
+after bonus expiry and while normal bonus activity is paused so a confirmed
+permanent settlement failure cannot strand the player's balance or wagering
+progress. `cancelTimeframe` cannot be configured below five minutes.
 
 Each round snapshots the configured bonus contract when it is first opened.
 Rotating `bonusContract` affects only new rounds; consume, release, settlement,
-and cancellation always call the snapshotted contract. V2 is not deployed or
-upgradeable in this repository, so the snapshot is appended directly to the
-`BonusRound` struct and exposed as the final field of `rounds(bytes32)`.
+and cancellation always call the snapshotted contract. The contract and refund
+deadline snapshots are appended directly to `BonusRound` and exposed by
+`rounds(bytes32)`.
 
 Casino-backend never receives an operator role or submits ledger transactions.
+The OCG worker submits atomic plays from the bonus bet pool, and every wallet
+eligible for atomic execution must also be authorized as a settlement operator.
+The worker verifies both on-chain roles before broadcasting.
 
 ## Operator administration
 
