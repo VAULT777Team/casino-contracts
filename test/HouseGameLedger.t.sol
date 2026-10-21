@@ -575,6 +575,7 @@ contract HouseGameLedgerTest is Test {
         ledger.reserveAndSettleBatch(address(token), _onePlayer(PLAYER), reservations, settlements);
 
         assertEq(uint256(ledger.getRoundStatus(roundKey)), uint256(HouseGameLedger.RoundStatus.Closed));
+        assertTrue(ledger.actionUsed(settlements[0].actionKey));
         assertEq(token.balanceOf(PLAYER), playerStart + 1 ether);
         assertEq(token.balanceOf(address(ledger)), 0);
         assertEq(bankroll.reservedFunds(address(token)), 0);

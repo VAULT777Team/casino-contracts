@@ -454,6 +454,9 @@ contract HouseGameLedger is ReentrancyGuard {
             if (settlement.actionKey != expectedActionKey) {
                 revert SettlementActionMismatch(settlement.roundKey);
             }
+            if (actionUsed[settlement.actionKey]) {
+                revert DuplicateAction(settlement.actionKey);
+            }
             if (settlement.actualWager > round.reservation) {
                 revert WagerExceedsReservation();
             }
@@ -468,6 +471,7 @@ contract HouseGameLedger is ReentrancyGuard {
             }
 
             round.status = RoundStatus.Closed;
+            actionUsed[settlement.actionKey] = true;
             round.closedAt = uint64(block.timestamp);
             round.actualWager = uint128(settlement.actualWager);
             round.grossPlayerReturn = uint128(settlement.grossPlayerReturn);
