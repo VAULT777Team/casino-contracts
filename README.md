@@ -105,6 +105,18 @@ forge test
 forge test -vvv
 ```
 
+### Vault777 Escrow Lottery
+
+`Vault777Lottery` is a USDC-style escrow lottery. Ticket masks encode five distinct main numbers from 1–74 and either one standard Powerball (1–18) or the round-configured count for a power ticket. The backend selects and verifies winners off-chain; the contract does not generate randomness. `rounds(roundId)` exposes each round as the public mapping getter tuple, and `paid(roundId, recipient)` tracks one-time winner payments.
+
+The `OPERATOR_ROLE` creates rounds, pays winners, and finalizes closed rounds with a capped house fee and rollover into an open next round. The `DEFAULT_ADMIN_ROLE` manages pausing and the house recipient, and can close out a closed round in an emergency. Anyone may seed an unfinalized round.
+
+Set `LOTTERY_TOKEN`, `LOTTERY_ADMIN`, `LOTTERY_OPERATOR`, `LOTTERY_HOUSE_RECIPIENT`, `PRIVATE_KEY`, and `RPC_URL`, then deploy with:
+
+```bash
+forge script script/DeployVault777Lottery.s.sol:DeployVault777Lottery --rpc-url "$RPC_URL" --broadcast
+```
+
 ### Deploy Games
 
 Deploy all games using the Foundry script:
