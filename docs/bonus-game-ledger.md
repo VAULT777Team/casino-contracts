@@ -10,10 +10,40 @@ authorize only one ledger, so rollout must:
 4. set `BONUS_GAME_LEDGER_V2_ADDRESS` (and, after migration,
    `BONUS_GAME_LEDGER_ADDRESS`) in the Vault777 game services.
 
-The replacement reports protocol version 3. Services must keep existing
+The replacement reports protocol version 4. Services must keep existing
 protocol-v2 ledgers on the legacy reserve/consume/release/settle flow and use
 `reserveAndSettleBatch` only after the configured on-chain ledger reports
-version 3.
+version 3 or later.
+
+## Incremental provider rounds (protocol 4)
+
+Provider bonus play uses `betProviderBonusBatchFor` and
+`creditProviderBonusBatch`, not the house-game final settlement endpoint.
+Only the dedicated provider debit entrypoint can mark a new round as a provider
+round. Existing house or legacy rounds cannot be reclassified. Provider rounds
+cannot be submitted to `betBonusBatchFor` or `settleBonusBatch`.
+
+Each provider credit is an incremental payout, including zero, protected by
+its unique action key. `providerRoundPaidOut` records their cumulative total;
+the payout cap applies to that total against the round's total consumed stake.
+Stake is never implicitly returned or added to a credit. Additional genuine
+debits in the same round remain supported and increase stake/contribution.
+
+For provider rounds, `closedAt` records the first result and disables cancellation;
+it does not prohibit subsequent provider credits. A round canceled before its
+first result cannot receive credits or accept another debit. House-game
+`settleBonusBatch` remains final: a second house settlement still reverts.
+The first debit's `refundAt` remains the deadline for provider debits and credits;
+the new path does not extend it or accept callbacks after it expires.
+Ensure the configured window covers the enabled provider feature durations.
+
+This is a replacement deployment, not an upgrade to an existing address.
+Closed rounds on the old ledger cannot be reopened by deploying this code.
+Quiesce launches, drain/reconcile all old jobs and callbacks, configure operators,
+switch the bonus token's authorized ledger, then update both ledger-address
+configuration and provider routing in the game services together. Failed old
+credits require a separately approved reconciliation/recovery, not blind replay
+against the new ledger, which has no record of the old stake.
 
 Interactive rounds reserve by burning the maximum exposure with zero wagering
 contribution. Each base/split/double/side-bet consume action temporarily credits

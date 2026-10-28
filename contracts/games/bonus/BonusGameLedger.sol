@@ -26,7 +26,7 @@ interface IBonus1155V2 {
 contract BonusGameLedger {
     uint256 private constant _NOT_ENTERED = 1;
     uint256 private constant _ENTERED = 2;
-    uint256 public constant PROTOCOL_VERSION = 3;
+    uint256 public constant PROTOCOL_VERSION = 4;
     uint256 public constant MIN_REFUND_DELAY = 5 minutes;
 
     struct AtomicSettlement {
@@ -66,6 +66,8 @@ contract BonusGameLedger {
     mapping(address => bool) public isSettleOperator;
     mapping(address => bool) public isAdmin;
     mapping(address => uint256) public selfExcludedUntil;
+    mapping(bytes32 => bool) public providerRounds;
+    mapping(bytes32 => uint256) public providerRoundPaidOut;
 
     event BonusReserved(
         bytes32 indexed actionKey,
@@ -300,13 +302,7 @@ contract BonusGameLedger {
                 settlement.stake,
                 settlement.wagerContributionBps
             );
-            _settleBonusRound(
-                token,
-                bonusId,
-                settlement.settlementActionKey,
-                settlement.roundKey,
-                settlement.payout
-            );
+            _settleBonusRound(token, bonusId, settlement.settlementActionKey, settlement.roundKey, settlement.payout);
             totalStake += settlement.stake;
             totalContribution += contribution;
         }
@@ -397,11 +393,73 @@ contract BonusGameLedger {
             "LEN"
         );
         for (uint256 i; i < n; ++i) {
+            require(!providerRounds[roundKeys[i]], "PROVIDER_ROUND");
             uint256 contribution = _placeImmediateBet(
                 token, bonusId, players[i], actionKeys[i], roundKeys[i], stakes[i], wagerContributionBps[i]
             );
             totalStake += stakes[i];
             totalContribution += contribution;
+        }
+    }
+
+    /// @notice Provider wagers may receive several incremental credits under one round key.
+    function betProviderBonusBatchFor(
+        address token,
+        uint256 bonusId,
+        address[] calldata players,
+        bytes32[] calldata actionKeys,
+        bytes32[] calldata roundKeys,
+        uint256[] calldata stakes,
+        uint16[] calldata wagerContributionBps
+    ) external onlyBetOperator nonReentrant whenNotPaused returns (uint256 totalStake, uint256 totalContribution) {
+        uint256 n = actionKeys.length;
+        require(
+            n > 0 && players.length == n && roundKeys.length == n && stakes.length == n
+                && wagerContributionBps.length == n,
+            "LEN"
+        );
+        for (uint256 i; i < n; ++i) {
+            BonusRound storage round = rounds[roundKeys[i]];
+            if (round.player == address(0)) {
+                providerRounds[roundKeys[i]] = true;
+            } else {
+                require(providerRounds[roundKeys[i]], "NOT_PROVIDER_ROUND");
+                _requireSettlementWindow(round);
+            }
+            totalContribution += _placeImmediateBet(
+                token, bonusId, players[i], actionKeys[i], roundKeys[i], stakes[i], wagerContributionBps[i]
+            );
+            totalStake += stakes[i];
+        }
+    }
+
+    /// @notice Credits a provider delta, never a cumulative total or an implicit stake refund.
+    function creditProviderBonusBatch(
+        address token,
+        uint256 bonusId,
+        bytes32[] calldata actionKeys,
+        bytes32[] calldata roundKeys,
+        uint256[] calldata payouts
+    ) external onlySettleOperator nonReentrant whenNotPaused {
+        uint256 n = actionKeys.length;
+        require(n > 0 && roundKeys.length == n && payouts.length == n, "LEN");
+        for (uint256 i; i < n; ++i) {
+            _useAction(actionKeys[i]);
+            BonusRound storage round = rounds[roundKeys[i]];
+            require(providerRounds[roundKeys[i]], "NOT_PROVIDER_ROUND");
+            require(round.player != address(0), "ROUND_NOT_FOUND");
+            require(round.token == token, "TOKEN_MISMATCH");
+            require(round.bonusId == bonusId, "BONUS_MISMATCH");
+            // Cancellation releases the full immediate stake; that round must never pay again.
+            require(round.released == 0, "ROUND_CANCELED");
+            _requireSettlementWindow(round);
+            uint256 cumulativePayout = providerRoundPaidOut[roundKeys[i]] + payouts[i];
+            require(cumulativePayout <= round.consumed * maxPayoutMultiplierX, "PAYOUT_LIMIT");
+            providerRoundPaidOut[roundKeys[i]] = cumulativePayout;
+            // The first result disables cancellation, but is not the final provider credit.
+            if (round.closedAt == 0) round.closedAt = block.timestamp;
+            IBonus1155V2(round.bonusContract).creditPayout(round.player, token, bonusId, payouts[i]);
+            emit BetSettled(actionKeys[i], roundKeys[i], round.player, token, bonusId, payouts[i]);
         }
     }
 
@@ -430,13 +488,10 @@ contract BonusGameLedger {
         actionUsed[actionKey] = true;
     }
 
-    function _settleBonusRound(
-        address token,
-        uint256 bonusId,
-        bytes32 actionKey,
-        bytes32 roundKey,
-        uint256 payout
-    ) private {
+    function _settleBonusRound(address token, uint256 bonusId, bytes32 actionKey, bytes32 roundKey, uint256 payout)
+        private
+    {
+        require(!providerRounds[roundKey], "PROVIDER_ROUND");
         _useAction(actionKey);
         BonusRound storage round = _openRound(roundKey, token, bonusId);
         _requireSettlementWindow(round);
@@ -506,9 +561,11 @@ contract BonusGameLedger {
             round.refundAt = block.timestamp + cancelTimeframe;
         } else {
             require(
-                round.player == player && round.token == token && round.bonusId == bonusId && round.closedAt == 0,
+                round.player == player && round.token == token && round.bonusId == bonusId
+                    && (round.closedAt == 0 || providerRounds[roundKey]),
                 "ROUND_MISMATCH"
             );
+            require(!providerRounds[roundKey] || round.released == 0, "ROUND_CANCELED");
         }
         contribution = (stake * wagerContributionBps) / 10_000;
         round.reserved += stake;

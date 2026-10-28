@@ -54,6 +54,161 @@ contract BonusGameLedgerTest is Test {
         bonus.mint(PLAYER, BONUS_ID, 100 ether);
     }
 
+    function testProviderBonusCreditsContinueAfterFirstPayout() public {
+        bytes32 round = keccak256("provider-feature");
+        _providerBet(round, keccak256("provider-bet"), 19 ether);
+        _providerCredit(round, keccak256("first-credit"), 1.25 ether);
+        (,,,,,,, uint256 closedAt,,) = ledger.rounds(round);
+        assertGt(closedAt, 0);
+        _providerCredit(round, keccak256("later-credit"), 0.38 ether);
+        assertEq(bonus.balanceOf(PLAYER, BONUS_ID), 82.63 ether);
+        assertEq(bonus.wageredAmount(BONUS_ID), 19 ether);
+        assertEq(ledger.providerRoundPaidOut(round), 1.63 ether);
+    }
+
+    function testProviderCreditsInOneBatchRetainEveryDelta() public {
+        bytes32 round = keccak256("provider-batch");
+        _providerBet(round, keccak256("provider-bet"), 20 ether);
+        uint256[16] memory wins = [uint256(70), 33, 25, 84, 45, 86, 73, 43, 101, 96, 33, 49, 87, 28, 63, 20];
+        bytes32[] memory actions = new bytes32[](16);
+        bytes32[] memory rounds = new bytes32[](16);
+        uint256[] memory payouts = new uint256[](16);
+        for (uint256 i; i < 16; ++i) {
+            actions[i] = keccak256(abi.encode("credit", i));
+            rounds[i] = round;
+            payouts[i] = wins[i] * 1 ether;
+        }
+        ledger.creditProviderBonusBatch(TOKEN, BONUS_ID, actions, rounds, payouts);
+        assertEq(ledger.providerRoundPaidOut(round), 936 ether);
+        assertEq(bonus.balanceOf(PLAYER, BONUS_ID), 1016 ether);
+        assertEq(bonus.wageredAmount(BONUS_ID), 20 ether);
+        vm.expectRevert("DUP_ACTION");
+        ledger.creditProviderBonusBatch(TOKEN, BONUS_ID, actions, rounds, payouts);
+        assertEq(ledger.providerRoundPaidOut(round), 936 ether);
+    }
+
+    function testProviderPayoutLimitIsCumulativeAndFailedActionCanRetry() public {
+        bytes32 round = keccak256("provider-cap");
+        _providerBet(round, keccak256("bet"), 1 ether);
+        _providerCredit(round, keccak256("credit"), 60 ether);
+        bytes32 action = keccak256("over-cap");
+        vm.expectRevert("PAYOUT_LIMIT");
+        _providerCredit(round, action, 41 ether);
+        assertFalse(ledger.actionUsed(action));
+        assertEq(ledger.providerRoundPaidOut(round), 60 ether);
+        _providerCredit(round, action, 40 ether);
+        assertEq(ledger.providerRoundPaidOut(round), 100 ether);
+    }
+
+    function testProviderCanAddPaidDebitsAfterFirstCredit() public {
+        bytes32 round = keccak256("provider-more-debits");
+        _providerBet(round, keccak256("bet"), 2 ether);
+        _providerCredit(round, keccak256("credit"), 1 ether);
+        _providerBet(round, keccak256("second-bet"), 3 ether);
+        _providerCredit(round, keccak256("second-credit"), 4 ether);
+        assertEq(bonus.balanceOf(PLAYER, BONUS_ID), 100 ether);
+        assertEq(bonus.wageredAmount(BONUS_ID), 5 ether);
+        assertEq(ledger.providerRoundPaidOut(round), 5 ether);
+    }
+
+    function testProviderCannotCancelAfterAnyCreditIncludingZero() public {
+        bytes32 round = keccak256("provider-zero");
+        _providerBet(round, keccak256("bet"), 2 ether);
+        _providerCredit(round, keccak256("credit"), 0);
+        vm.expectRevert("ALREADY_SETTLED");
+        ledger.cancel(round);
+        _providerCredit(round, keccak256("later-credit"), 1 ether);
+        assertEq(bonus.balanceOf(PLAYER, BONUS_ID), 99 ether);
+    }
+
+    function testCanceledProviderRoundCannotPayOrAcceptNewDebits() public {
+        bytes32 round = keccak256("provider-cancel");
+        _providerBet(round, keccak256("bet"), 19 ether);
+        ledger.cancel(round);
+        assertEq(bonus.balanceOf(PLAYER, BONUS_ID), 100 ether);
+        assertEq(bonus.wageredAmount(BONUS_ID), 0);
+        vm.expectRevert("ROUND_CANCELED");
+        _providerCredit(round, keccak256("credit"), 1 ether);
+        vm.expectRevert("ROUND_CANCELED");
+        _providerBet(round, keccak256("later-bet"), 1 ether);
+    }
+
+    function testProviderAndHouseRoundModesCannotBeMixed() public {
+        bytes32 house = _reserve(10 ether);
+        _consume(house, keccak256("house-consume"), 10 ether);
+        vm.expectRevert("NOT_PROVIDER_ROUND");
+        _providerCredit(house, keccak256("provider-credit"), 1 ether);
+        vm.expectRevert("NOT_PROVIDER_ROUND");
+        _providerBet(house, keccak256("provider-bet"), 1 ether);
+        _settle(house, keccak256("house-settle"), 1 ether);
+        vm.expectRevert("ROUND_CLOSED");
+        _settle(house, keccak256("house-settle-again"), 1 ether);
+
+        bytes32 provider = keccak256("provider-mode");
+        _providerBet(provider, keccak256("bet"), 1 ether);
+        vm.expectRevert("PROVIDER_ROUND");
+        _settle(provider, keccak256("house-provider-settle"), 1 ether);
+        address[] memory players = new address[](1);
+        players[0] = PLAYER;
+        uint16[] memory bps = new uint16[](1);
+        bps[0] = 10_000;
+        vm.expectRevert("PROVIDER_ROUND");
+        ledger.betBonusBatchFor(
+            TOKEN,
+            BONUS_ID,
+            players,
+            _actions(keccak256("house-provider-bet")),
+            _rounds(provider),
+            _amounts(1 ether),
+            bps
+        );
+    }
+
+    function testProviderValidatesAssetBonusIdAndRoles() public {
+        bytes32 round = keccak256("provider-guards");
+        _providerBet(round, keccak256("bet"), 1 ether);
+        vm.expectRevert("TOKEN_MISMATCH");
+        ledger.creditProviderBonusBatch(
+            address(1), BONUS_ID, _actions(keccak256("bad-token")), _rounds(round), _amounts(1 ether)
+        );
+        vm.expectRevert("BONUS_MISMATCH");
+        ledger.creditProviderBonusBatch(
+            TOKEN, BONUS_ID + 1, _actions(keccak256("bad-bonus")), _rounds(round), _amounts(1 ether)
+        );
+        vm.prank(address(0xBAD));
+        vm.expectRevert("NOT_SETTLE_OPERATOR");
+        _providerCredit(round, keccak256("unauthorized-credit"), 1 ether);
+        vm.prank(address(0xBAD));
+        vm.expectRevert("NOT_BET_OPERATOR");
+        _providerBet(round, keccak256("unauthorized-bet"), 1 ether);
+    }
+
+    function testProviderKeepsOriginalDeadline() public {
+        bytes32 round = keccak256("provider-deadline");
+        _providerBet(round, keccak256("bet"), 1 ether);
+        (,,,,,,,,, uint256 refundAt) = ledger.rounds(round);
+        _providerCredit(round, keccak256("first-credit"), 1 ether);
+        vm.warp(refundAt);
+        vm.expectRevert("SETTLEMENT_WINDOW_EXPIRED");
+        _providerCredit(round, keccak256("late-credit"), 1 ether);
+        vm.expectRevert("SETTLEMENT_WINDOW_EXPIRED");
+        _providerBet(round, keccak256("late-bet"), 1 ether);
+    }
+
+    function _providerBet(bytes32 round, bytes32 action, uint256 stake) internal {
+        address[] memory players = new address[](1);
+        players[0] = PLAYER;
+        uint16[] memory bps = new uint16[](1);
+        bps[0] = 10_000;
+        ledger.betProviderBonusBatchFor(
+            TOKEN, BONUS_ID, players, _actions(action), _rounds(round), _amounts(stake), bps
+        );
+    }
+
+    function _providerCredit(bytes32 round, bytes32 action, uint256 payout) internal {
+        ledger.creditProviderBonusBatch(TOKEN, BONUS_ID, _actions(action), _rounds(round), _amounts(payout));
+    }
+
     function testReservationDoesNotIncreaseWagerProgress() public {
         _reserve(40 ether);
         assertEq(bonus.balanceOf(PLAYER, BONUS_ID), 60 ether);
